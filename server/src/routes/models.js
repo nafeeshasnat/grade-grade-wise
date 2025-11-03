@@ -114,13 +114,36 @@ router.post('/train', authenticateToken, upload.single('trainFile'), async (req,
 });
 
 // Stream training logs (SSE)
-router.get('/train/:runId/logs', authenticateToken, async (req, res) => {
+router.get('/train/:runId/logs', async (req, res) => {
   try {
     const { runId } = req.params;
+    const token = req.query.token;
+
+    if (!token) {
+      return res.status(401).json({ error: 'Access token required' });
+    }
+
+    // Verify token manually (EventSource doesn't support headers)
+    let decoded;
+    try {
+      const jwt = await import('jsonwebtoken');
+      decoded = jwt.default.verify(token, process.env.JWT_SECRET);
+    } catch (error) {
+      return res.status(403).json({ error: 'Invalid or expired token' });
+    }
+
+    // Fetch user to verify orgId
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.userId }
+    });
+
+    if (!user) {
+      return res.status(403).json({ error: 'User not found' });
+    }
 
     // Verify run belongs to org
     const modelRun = await prisma.modelRun.findFirst({
-      where: { id: runId, orgId: req.orgId }
+      where: { id: runId, orgId: user.orgId }
     });
 
     if (!modelRun) {
