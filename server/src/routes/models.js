@@ -25,7 +25,7 @@ const storage = multer.diskStorage({
   }
 });
 
-const upload = multer({ 
+const upload = multer({
   storage,
   fileFilter: (req, file, cb) => {
     if (file.mimetype === 'application/json' || file.originalname.endsWith('.json')) {
@@ -114,13 +114,36 @@ router.post('/train', authenticateToken, upload.single('trainFile'), async (req,
 });
 
 // Stream training logs (SSE)
-router.get('/train/:runId/logs', authenticateToken, async (req, res) => {
+router.get('/train/:runId/logs', async (req, res) => {
   try {
     const { runId } = req.params;
+    const token = req.query.token;
+
+    if (!token) {
+      return res.status(401).json({ error: 'Access token required' });
+    }
+
+    // Verify token manually (EventSource doesn't support headers)
+    let decoded;
+    try {
+      const jwt = await import('jsonwebtoken');
+      decoded = jwt.default.verify(token, process.env.JWT_SECRET);
+    } catch (error) {
+      return res.status(403).json({ error: 'Invalid or expired token' });
+    }
+
+    // Fetch user to verify orgId
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.userId }
+    });
+
+    if (!user) {
+      return res.status(403).json({ error: 'User not found' });
+    }
 
     // Verify run belongs to org
     const modelRun = await prisma.modelRun.findFirst({
-      where: { id: runId, orgId: req.orgId }
+      where: { id: runId, orgId: user.orgId }
     });
 
     if (!modelRun) {
@@ -146,7 +169,7 @@ router.get('/train/:runId/logs', authenticateToken, async (req, res) => {
           const stream = await fs.readFile(logPath, 'utf-8');
           const newContent = stream.slice(lastSize);
           lastSize = stats.size;
-          
+
           res.write(`data: ${JSON.stringify({ content: newContent })}\n\n`);
         }
 
@@ -196,7 +219,7 @@ router.get('/train/:runId/logs', authenticateToken, async (req, res) => {
 router.get('/summary', authenticateToken, async (req, res) => {
   try {
     const lastSucceeded = await prisma.modelRun.findFirst({
-      where: { 
+      where: {
         orgId: req.orgId,
         status: 'SUCCEEDED'
       },
