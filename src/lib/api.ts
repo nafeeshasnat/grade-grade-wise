@@ -1,0 +1,130 @@
+const API_URL = 'http://localhost:3000/api';
+
+interface AuthResponse {
+  token: string;
+  user: {
+    id: string;
+    email: string;
+  };
+  org: {
+    id: string;
+    name: string;
+  };
+}
+
+class ApiClient {
+  private token: string | null = null;
+
+  constructor() {
+    this.token = localStorage.getItem('token');
+  }
+
+  setToken(token: string) {
+    this.token = token;
+    localStorage.setItem('token', token);
+  }
+
+  clearToken() {
+    this.token = null;
+    localStorage.removeItem('token');
+  }
+
+  private async fetch(endpoint: string, options: RequestInit = {}) {
+    const headers: HeadersInit = {
+      ...options.headers,
+    };
+
+    if (this.token && !headers['Authorization']) {
+      headers['Authorization'] = `Bearer ${this.token}`;
+    }
+
+    const response = await fetch(`${API_URL}${endpoint}`, {
+      ...options,
+      headers,
+    });
+
+    if (response.status === 401) {
+      this.clearToken();
+      window.location.href = '/signin';
+      throw new Error('Unauthorized');
+    }
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.error || 'Request failed');
+    }
+
+    return data;
+  }
+
+  // Auth
+  async signup(orgName: string, email: string, password: string): Promise<AuthResponse> {
+    const data = await this.fetch('/auth/signup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ orgName, email, password }),
+    });
+    this.setToken(data.token);
+    return data;
+  }
+
+  async signin(email: string, password: string): Promise<AuthResponse> {
+    const data = await this.fetch('/auth/signin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    this.setToken(data.token);
+    return data;
+  }
+
+  async me() {
+    return this.fetch('/auth/me');
+  }
+
+  // Models
+  async getModelStatus() {
+    return this.fetch('/models/status');
+  }
+
+  async startTraining(trainFile: File, config: any) {
+    const formData = new FormData();
+    formData.append('trainFile', trainFile);
+    formData.append('config', JSON.stringify(config));
+
+    return this.fetch('/models/train', {
+      method: 'POST',
+      body: formData,
+    });
+  }
+
+  getTrainLogsUrl(runId: string) {
+    return `${API_URL}/models/train/${runId}/logs`;
+  }
+
+  async getModelSummary() {
+    return this.fetch('/models/summary');
+  }
+
+  // Predictions
+  async predict(studentFile: File) {
+    const formData = new FormData();
+    formData.append('studentFile', studentFile);
+
+    return this.fetch('/predict', {
+      method: 'POST',
+      body: formData,
+    });
+  }
+
+  async getPredictions() {
+    return this.fetch('/predict');
+  }
+
+  async getPrediction(id: string) {
+    return this.fetch(`/predict/${id}`);
+  }
+}
+
+export const api = new ApiClient();
