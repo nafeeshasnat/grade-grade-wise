@@ -200,7 +200,7 @@ def main():
     from sklearn.svm import SVR
     from sklearn.preprocessing import StandardScaler
     import lightgbm as lgb
-    from sklearn.metrics import r2_score, mean_squared_error
+    from sklearn.metrics import r2_score, mean_squared_error, accuracy_score
 
     # Split for evaluation
     from sklearn.model_selection import train_test_split as _tts
@@ -229,7 +229,8 @@ def main():
     evals_result = {}
     lgbm.fit(
         Xtr_lgb, ytr_lgb,
-        eval_set=[(Xval_lgb, yval_lgb)],
+        eval_set=[(Xtr_lgb, ytr_lgb), (Xval_lgb, yval_lgb)],
+        eval_names=["train", "valid"],
         eval_metric="rmse",
         callbacks=[lgb.early_stopping(stopping_rounds=100, verbose=False),
                    lgb.record_evaluation(evals_result)]
@@ -328,14 +329,28 @@ def main():
         elif cgpa <= RISK_MED_MAX: return "Medium"
         return "Low"
     risk_y = np.array([label_risk(v) for v in y_final])
-    from sklearn.model_selection import train_test_split as _tts2
-    Xc_tr, Xc_te, yc_tr, yc_te = _tts2(X_final, risk_y, test_size=TEST_SIZE, random_state=RANDOM_SEED, stratify=risk_y)
-    from imblearn.over_sampling import SMOTE
-    sm = SMOTE(random_state=RANDOM_SEED)
-    Xc_tr_res, yc_tr_res = sm.fit_resample(Xc_tr, yc_tr)
+    unique_risk = np.unique(risk_y)
+    ypred_risk = None
+    yc_te = None
     from sklearn.ensemble import RandomForestClassifier
-    risk_clf = RandomForestClassifier(n_estimators=250, random_state=RANDOM_SEED, n_jobs=-1)
-    risk_clf.fit(Xc_tr_res, yc_tr_res)
+    if len(unique_risk) >= 2:
+        from sklearn.model_selection import train_test_split as _tts2
+        Xc_tr, Xc_te, yc_tr, yc_te = _tts2(X_final, risk_y, test_size=TEST_SIZE, random_state=RANDOM_SEED, stratify=risk_y)
+        from imblearn.over_sampling import SMOTE
+        sm = SMOTE(random_state=RANDOM_SEED)
+        Xc_tr_res, yc_tr_res = sm.fit_resample(Xc_tr, yc_tr)
+        risk_clf = RandomForestClassifier(n_estimators=250, random_state=RANDOM_SEED, n_jobs=-1)
+        risk_clf.fit(Xc_tr_res, yc_tr_res)
+        ypred_risk = risk_clf.predict(Xc_te)
+        risk_accuracy = accuracy_score(yc_te, ypred_risk)
+    else:
+        from sklearn.dummy import DummyClassifier
+        # Fall back to constant classifier if we have only one risk label
+        constant_label = unique_risk[0] if len(unique_risk) else "Low"
+        risk_clf = DummyClassifier(strategy="constant", constant=constant_label)
+        risk_clf.fit(X_final, risk_y)
+        risk_accuracy = 1.0
+
     joblib.dump(risk_clf, out_dir/"RiskClassifier.joblib")
 
     # Metadata
@@ -345,12 +360,30 @@ def main():
         "grade_points": GRADE_POINTS,
         "max_gpa": max_gpa,
         "best_model": str(best_name),
-        "models": {r["name"]: {"r2_tr": r["r2_tr"], "r2_te": r["r2_te"], "rmse_tr": r["rmse_tr"], "rmse_te": r["rmse_te"]} for r in results}
+        "models": {r["name"]: {"r2_tr": r["r2_tr"], "r2_te": r["r2_te"], "rmse_tr": r["rmse_tr"], "rmse_te": r["rmse_te"]} for r in results},
+        "risk_accuracy": float(risk_accuracy)
     }
     with open(out_dir/"metadata.json", "w") as f:
         json.dump(meta, f, indent=2)
 
+    # Determine storage root so we can emit static URLs
+    storage_root = None
+    for idx, part in enumerate(out_dir.parts):
+        if part == "storage":
+            storage_root = Path(*out_dir.parts[:idx + 1])
+            break
+
+    def to_static_path(path_obj: Path) -> str:
+        if storage_root is not None:
+            try:
+                rel = path_obj.relative_to(storage_root)
+                return "/static/" + rel.as_posix()
+            except Exception:
+                pass
+        return str(path_obj)
+
     # --------- Plotting (best-effort, won't crash training) ---------
+    saved_plots = {}
     if plt is not None:
         try:
             # Residuals for best model
@@ -364,6 +397,7 @@ def main():
             else:
                 ax[1].hist(resid, bins=30); ax[1].set_title(f"{best_name}: Residual Distribution")
             plt.tight_layout(); p = plots_dir/"best_model_residuals.png"; plt.savefig(p); plt.close(fig)
+            saved_plots["best_model_residuals"] = to_static_path(p)
 
             # Feature importances for RF / LGBM
             try:
@@ -372,7 +406,9 @@ def main():
                              y=pd.Series(rf.feature_importances_, index=feat_names).sort_values(ascending=False).index)
                  if sns is not None else plt.barh(feat_names, rf.feature_importances_))
                 plt.title("RF Feature Importance"); plt.tight_layout()
-                plt.savefig(plots_dir/"rf_importance.png"); plt.close()
+                p = plots_dir/"rf_importance.png"
+                plt.savefig(p); plt.close()
+                saved_plots["rf_feature_importance"] = to_static_path(p)
             except Exception as e:
                 print(f"[WARN] RF plot failed: {e}")
 
@@ -382,31 +418,61 @@ def main():
                              y=pd.Series(lgbm.feature_importances_, index=feat_names).sort_values(ascending=False).index)
                  if sns is not None else plt.barh(feat_names, lgbm.feature_importances_))
                 plt.title("LGBM Feature Importance"); plt.tight_layout()
-                plt.savefig(plots_dir/"lgbm_importance.png"); plt.close()
+                p = plots_dir/"lgbm_importance.png"
+                plt.savefig(p); plt.close()
+                saved_plots["lgbm_feature_importance"] = to_static_path(p)
             except Exception as e:
                 print(f"[WARN] LGBM plot failed: {e}")
 
             # Risk confusion matrix
             try:
                 from sklearn.metrics import ConfusionMatrixDisplay
-                import matplotlib
-                ypred = risk_clf.predict(Xc_te)
-                disp = ConfusionMatrixDisplay.from_predictions(yc_te, ypred)
-                plt.title("Risk Classifier Confusion Matrix"); plt.tight_layout()
-                plt.savefig(plots_dir/"risk_confusion_matrix.png"); plt.close()
+                if yc_te is not None and ypred_risk is not None:
+                    ConfusionMatrixDisplay.from_predictions(yc_te, ypred_risk)
+                    plt.title("Risk Classifier Confusion Matrix"); plt.tight_layout()
+                    p = plots_dir/"risk_confusion_matrix.png"
+                    plt.savefig(p); plt.close()
+                    saved_plots["risk_confusion_matrix"] = to_static_path(p)
             except Exception as e:
                 print(f"[WARN] Risk CM plot failed: {e}")
+
+            # LightGBM learning curve
+            try:
+                train_curve = evals_result.get("train", {}).get("rmse", [])
+                valid_curve = evals_result.get("valid", {}).get("rmse", [])
+                if train_curve or valid_curve:
+                    fig = plt.figure(figsize=(6,4))
+                    if train_curve:
+                        plt.plot(train_curve, label="Train RMSE")
+                    if valid_curve:
+                        plt.plot(valid_curve, label="Validation RMSE")
+                    plt.xlabel("Iteration"); plt.ylabel("RMSE"); plt.title("LightGBM Learning Curve")
+                    plt.legend(); plt.tight_layout()
+                    p = plots_dir/"lightgbm_learning_curve.png"
+                    plt.savefig(p); plt.close()
+                    saved_plots["lightgbm_learning_curve"] = to_static_path(p)
+            except Exception as e:
+                print(f"[WARN] Learning curve plot failed: {e}")
 
         except Exception as e:
             print(f"[WARN] plotting failed: {e}")
 
     # --------- Final result ---------
+    best_metrics = rank_df.iloc[0]
+    metrics_summary = {
+        "rmse": float(best_metrics["rmse_te"]),
+        "r2": float(best_metrics["r2_te"]),
+        "accuracy": float(risk_accuracy)
+    }
+
     result = {
         "status": "ok",
         "bestModel": meta["best_model"],
         "artifactsDir": str(out_dir),
-        "plots": [],  # frontend inspects directory if needed
-        "gradePoints": GRADE_POINTS
+        "plots": saved_plots,
+        "gradePoints": GRADE_POINTS,
+        "metrics": metrics_summary,
+        "models": meta["models"]
     }
     print("__RESULT__" + json.dumps(result))
     return 0

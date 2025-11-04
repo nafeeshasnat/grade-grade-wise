@@ -11,6 +11,15 @@ Fixed prediction script:
 import argparse, os, sys, json, numpy as np, datetime, joblib
 from pathlib import Path
 
+try:
+    import matplotlib.pyplot as plt
+    import seaborn as sns  # optional
+    from matplotlib.lines import Line2D
+except Exception:
+    plt = None
+    sns = None
+    Line2D = None
+
 def semester_gpa(sem, GP):
     pts = []
     for k, g in sem.items():
@@ -101,6 +110,23 @@ def main():
         "A+":4.0,"A":3.75,"A-":3.5,"B+":3.25,"B":3.0,"B-":2.75,"C":2.5,"C-":2.25,"D":2.0,"F":0.0
     })
     max_gpa = float(meta.get("max_gpa", max(GP.values())))
+    best_model = meta.get("best_model")
+
+    # Static asset helper
+    storage_root = None
+    for idx, part in enumerate(out_file.parts):
+        if part == "storage":
+            storage_root = Path(*out_file.parts[:idx + 1])
+            break
+
+    def to_static_path(path_obj: Path) -> str:
+        if storage_root is not None:
+            try:
+                rel = path_obj.relative_to(storage_root)
+                return "/static/" + rel.as_posix()
+            except Exception:
+                pass
+        return str(path_obj)
 
     print(f"[INFO] org={org_id} student={student.get('student_id')} max_gpa={max_gpa}")
 
@@ -179,6 +205,46 @@ def main():
         print(f"[WARN] risk prediction failed: {e}")
         risk_label = "Unknown"
 
+    plots = {}
+    if plt is not None:
+        try:
+            if preds_final:
+                fig, ax = plt.subplots(figsize=(6, 4))
+                models = list(preds_final.keys())
+                values = [preds_final[m] for m in models]
+                colors = ['#0ea5e9'] * len(models)
+                if best_model:
+                    for i, model in enumerate(models):
+                        if model.lower() == str(best_model).lower():
+                            colors[i] = '#22c55e'
+                ax.bar(models, values, color=colors)
+                ax.set_ylabel("Predicted Final CGPA")
+                ax.set_title("Final CGPA Predictions by Model")
+                ax.tick_params(axis='x', rotation=30)
+                if best_model and Line2D is not None:
+                    ax.legend(handles=[Line2D([0], [0], color='#22c55e', lw=8, label='Best Model')])
+                plt.tight_layout()
+                final_plot = out_file.with_name(out_file.stem + "_final_cgpa.png")
+                plt.savefig(final_plot)
+                plt.close(fig)
+                plots["final_cgpa_comparison"] = to_static_path(final_plot)
+
+            if preds_next:
+                fig, ax = plt.subplots(figsize=(6, 4))
+                models = list(preds_next.keys())
+                values = [preds_next[m] for m in models]
+                ax.bar(models, values, color='#6366f1')
+                ax.set_ylabel("Predicted Next Sem GPA")
+                ax.set_title("Next Semester GPA Predictions")
+                ax.tick_params(axis='x', rotation=30)
+                plt.tight_layout()
+                next_plot = out_file.with_name(out_file.stem + "_next_sem_gpa.png")
+                plt.savefig(next_plot)
+                plt.close(fig)
+                plots["next_sem_gpa_comparison"] = to_static_path(next_plot)
+        except Exception as e:
+            print(f"[WARN] prediction plotting failed: {e}")
+
     result_payload = {
         "student_id": student.get("student_id"),
         "current": {"last_sem_index": last_sem_idx, "last_sem_gpa": cur_sem_gpa, "current_cgpa": cur_cgpa},
@@ -190,7 +256,9 @@ def main():
         "risk": risk_label,
         "created_at": datetime.datetime.utcnow().isoformat()+"Z",
         "grade_points_used": GP,
-        "max_gpa": max_gpa
+        "max_gpa": max_gpa,
+        "best_model": best_model,
+        "plots": plots
     }
     out_file.parent.mkdir(parents=True, exist_ok=True)
     with open(out_file, "w") as f:
@@ -211,7 +279,9 @@ def main():
         "risk": risk_label,
         "current": result_payload["current"],
         "outFile": str(out_file),
-        "max_gpa": max_gpa
+        "max_gpa": max_gpa,
+        "plots": plots,
+        "bestModel": best_model
     }))
     return 0
 

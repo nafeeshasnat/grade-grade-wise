@@ -11,6 +11,24 @@ import { runPythonTrain } from '../utils/python-runner.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const router = express.Router();
 const prisma = new PrismaClient();
+const STORAGE_ROOT = path.join(__dirname, '../../storage');
+
+function toStaticPath(absPath) {
+  if (!absPath || typeof absPath !== 'string') return absPath;
+  const normalized = path.normalize(absPath);
+  if (normalized.startsWith(STORAGE_ROOT)) {
+    const rel = normalized.slice(STORAGE_ROOT.length).replace(/\\/g, '/');
+    return `/static${rel}`;
+  }
+  return absPath;
+}
+
+function normalizePlotMap(plots) {
+  if (!plots || typeof plots !== 'object') return {};
+  return Object.fromEntries(
+    Object.entries(plots).map(([key, value]) => [key, toStaticPath(value)])
+  );
+}
 
 // Configure multer for file uploads
 const storage = multer.diskStorage({
@@ -77,6 +95,12 @@ router.post('/train', authenticateToken, upload.single('trainFile'), async (req,
       return res.status(400).json({ error: error.message });
     }
 
+    // Capture any previous runs so we can remove them after creating the new one
+    const previousRuns = await prisma.modelRun.findMany({
+      where: { orgId: req.orgId },
+      select: { id: true, artifactsDir: true }
+    });
+
     // Create model run record
     const modelRun = await prisma.modelRun.create({
       data: {
@@ -99,6 +123,40 @@ router.post('/train', authenticateToken, upload.single('trainFile'), async (req,
       where: { id: modelRun.id },
       data: { status: 'RUNNING', artifactsDir: runDir }
     });
+
+    // Remove previous runs and their artifacts so only the latest remains
+    if (previousRuns.length > 0) {
+      const oldIds = previousRuns.map(run => run.id);
+      await prisma.modelRun.deleteMany({ where: { id: { in: oldIds } } });
+
+      await Promise.all(previousRuns.map(async (run) => {
+        if (run.artifactsDir) {
+          try {
+            await fs.rm(run.artifactsDir, { recursive: true, force: true });
+          } catch (err) {
+            console.error(`Failed to delete artifacts for run ${run.id}:`, err);
+          }
+        }
+      }));
+
+      const orgModelsDir = path.join(__dirname, '../../storage/models', req.orgId);
+      try {
+        const entries = await fs.readdir(orgModelsDir, { withFileTypes: true });
+        await Promise.all(entries.map(async (entry) => {
+          if (entry.isDirectory() && entry.name !== modelRun.id) {
+            try {
+              await fs.rm(path.join(orgModelsDir, entry.name), { recursive: true, force: true });
+            } catch (err) {
+              console.error(`Failed to delete leftover directory ${entry.name}:`, err);
+            }
+          }
+        }));
+      } catch (err) {
+        if (err.code !== 'ENOENT') {
+          console.error('Failed to clean model directory:', err);
+        }
+      }
+    }
 
     // Start training asynchronously
     runPythonTrain(req.orgId, modelRun.id, req.file.path, configPath, runDir, prisma)
@@ -233,7 +291,7 @@ router.get('/summary', authenticateToken, async (req, res) => {
     res.json({
       hasModel: true,
       metrics: lastSucceeded.metrics,
-      plots: lastSucceeded.plots,
+      plots: normalizePlotMap(lastSucceeded.plots),
       artifactsDir: lastSucceeded.artifactsDir,
       createdAt: lastSucceeded.createdAt,
       config: lastSucceeded.config

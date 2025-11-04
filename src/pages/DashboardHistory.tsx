@@ -5,6 +5,7 @@ import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Loader2, Eye, History } from 'lucide-react';
 import { toast } from 'sonner';
+import PredictionDetails from '@/components/predictions/PredictionDetails';
 
 export default function DashboardHistory() {
   const [predictions, setPredictions] = useState<any[]>([]);
@@ -57,38 +58,7 @@ export default function DashboardHistory() {
           </div>
 
           <Card className="p-8 bg-card/50 backdrop-blur-sm border-border/50">
-            <div className="space-y-6">
-              <div className="p-4 rounded-lg bg-primary/10 border border-primary/20">
-                <p className="text-sm text-muted-foreground mb-1">Student ID</p>
-                <p className="text-2xl font-bold text-foreground">{selectedPrediction.studentId}</p>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {selectedPrediction.results && Object.entries(selectedPrediction.results).map(([key, value]: any) => (
-                  <div key={key} className="p-4 rounded-lg bg-muted/30">
-                    <p className="text-sm text-muted-foreground mb-1">{key.replace(/_/g, ' ')}</p>
-                    <p className="text-lg font-semibold text-foreground">
-                      {typeof value === 'number' ? value.toFixed(3) : String(value)}
-                    </p>
-                  </div>
-                ))}
-              </div>
-
-              <div className="pt-4 border-t border-border/50 space-y-2 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Prediction ID:</span>
-                  <span className="text-foreground font-mono">{selectedPrediction.id}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Created at:</span>
-                  <span className="text-foreground">{new Date(selectedPrediction.createdAt).toLocaleString()}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Input file:</span>
-                  <span className="text-foreground font-mono text-xs">{selectedPrediction.inputPath}</span>
-                </div>
-              </div>
-            </div>
+            <PredictionDetails prediction={selectedPrediction} />
           </Card>
         </div>
       </Layout>

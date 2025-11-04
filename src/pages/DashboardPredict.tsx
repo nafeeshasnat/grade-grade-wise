@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Upload, Loader2, Zap } from 'lucide-react';
 import { toast } from 'sonner';
+import PredictionDetails from '@/components/predictions/PredictionDetails';
 
 export default function DashboardPredict() {
   const [file, setFile] = useState<File | null>(null);
@@ -90,48 +91,7 @@ export default function DashboardPredict() {
         {result && (
           <Card className="p-8 bg-card/50 backdrop-blur-sm border-border/50 animate-fade-in">
             <h3 className="text-2xl font-bold text-foreground mb-6">Prediction Results</h3>
-            
-            <div className="space-y-4">
-              <div className="p-4 rounded-lg bg-primary/10 border border-primary/20">
-                <p className="text-sm text-muted-foreground mb-1">Student ID</p>
-                <p className="text-xl font-bold text-foreground">{result.studentId}</p>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {result.results && Object.entries(result.results).map(([key, value]: any) => (
-                  <div key={key} className="p-4 rounded-lg bg-muted/30">
-                    <p className="text-sm text-muted-foreground mb-1">{key.replace(/_/g, ' ')}</p>
-                    <p className="text-lg font-semibold text-foreground">
-                      {typeof value === 'number' ? value.toFixed(3) : String(value)}
-                    </p>
-                  </div>
-                ))}
-              </div>
-
-              {result.results?.predicted_grade && (
-                <div className="p-6 rounded-lg bg-gradient-to-br from-primary/20 to-accent/20 border border-primary/30">
-                  <p className="text-sm text-muted-foreground mb-2">Predicted Grade</p>
-                  <p className="text-5xl font-bold text-foreground">{result.results.predicted_grade}</p>
-                </div>
-              )}
-
-              {result.results?.risk_level && (
-                <div className={`p-4 rounded-lg border ${
-                  result.results.risk_level === 'high' ? 'bg-destructive/10 border-destructive/30' :
-                  result.results.risk_level === 'medium' ? 'bg-yellow-500/10 border-yellow-500/30' :
-                  'bg-green-500/10 border-green-500/30'
-                }`}>
-                  <p className="text-sm text-muted-foreground mb-1">Risk Level</p>
-                  <p className="text-lg font-bold capitalize">{result.results.risk_level}</p>
-                </div>
-              )}
-
-              <div className="pt-4 border-t border-border/50">
-                <p className="text-xs text-muted-foreground">
-                  Predicted at: {new Date(result.createdAt).toLocaleString()}
-                </p>
-              </div>
-            </div>
+            <PredictionDetails prediction={result} />
           </Card>
         )}
       </div>

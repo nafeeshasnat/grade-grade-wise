@@ -12,6 +12,17 @@ dist
 dist-ssr
 *.local
 
+# Environment
+.env
+server/.env
+
+# Generated storage artifacts
+server/storage/models/**
+server/storage/predictions/**
+server/storage/uploads/**
+server/storage/**/train.log
+server/storage/**/analysis_history.json
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

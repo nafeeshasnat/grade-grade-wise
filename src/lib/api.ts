@@ -1,4 +1,21 @@
 const API_URL = 'http://localhost:3000/api';
+const API_BASE = API_URL.replace(/\/api$/, '');
+
+export const getApiBase = () => API_BASE;
+
+export const buildStaticUrl = (path?: string | null) => {
+  if (!path) return null;
+  if (path.startsWith('http://') || path.startsWith('https://')) {
+    return path;
+  }
+  if (path.startsWith('/static/')) {
+    return `${API_BASE}${path}`;
+  }
+  if (path.startsWith('static/')) {
+    return `${API_BASE}/${path}`;
+  }
+  return path;
+};
 
 interface AuthResponse {
   token: string;

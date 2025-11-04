@@ -7,17 +7,32 @@ A modern fullstack web application that orchestrates Python ML scripts for grade
 ### Prerequisites
 
 - Node.js 18+ and npm
-- Docker and Docker Compose
-- Python 3.8+ (with required ML dependencies)
+- PostgreSQL 15+ running locally (or reachable connection string)
+- Python 3.8+ with required scientific libraries (`numpy`, `pandas`, `scikit-learn`, `lightgbm`, `torch`, etc.)
 - Your `ml/train.py` and `ml/predict.py` scripts
 
-### 1. Start Database
+### 1. Database Setup
+
+If you are running PostgreSQL locally, create the database and user once after cloning:
 
 ```bash
-docker compose up -d
+# open the PostgreSQL shell (adjust to your environment)
+psql postgres
+
+-- inside psql
+CREATE DATABASE grade_predictor;
+CREATE USER grade_predictor_user WITH PASSWORD 'change-me';
+GRANT ALL PRIVILEGES ON DATABASE grade_predictor TO grade_predictor_user;
+\q
 ```
 
-This starts PostgreSQL on port 5432 and Adminer (database UI) on port 8080.
+Update `server/.env` with the connection string, for example:
+
+```
+DATABASE_URL="postgresql://grade_predictor_user:change-me@localhost:5432/grade_predictor"
+JWT_SECRET="replace-with-long-random-string"
+PYTHON_BIN="python3" # override if needed
+```
 
 ### 2. Backend Setup
 
@@ -122,7 +137,7 @@ __RESULT__{"status":"ok","prediction":{...}}
 │   ├── train.py
 │   ├── predict.py
 │   └── samples/
-└── docker-compose.yml  # PostgreSQL + Adminer
+└── docker-compose.yml  # Optional helper (legacy); not required if PostgreSQL is already available
 ```
 
 ## 🔑 Features
@@ -279,11 +294,13 @@ PYTHON_BIN=/opt/homebrew/bin/python3
 ```
 
 ### Database connection failed
-Ensure Docker containers are running:
+Confirm PostgreSQL is reachable:
 ```bash
-docker compose ps
-docker compose logs db
+pg_isready --dbname grade_predictor --host localhost --port 5432
+# or inspect the service logs
+journalctl -u postgresql --since "5 minutes ago"
 ```
+Also re-check the `DATABASE_URL` in `server/.env`.
 
 ### Training logs not streaming
 - Check SSE headers are correct

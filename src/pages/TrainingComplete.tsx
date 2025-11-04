@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { api } from '@/lib/api';
+import { api, buildStaticUrl } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { CheckCircle, BarChart3, TrendingUp, Target } from 'lucide-react';
@@ -98,13 +98,28 @@ export default function TrainingComplete() {
         {summary.plots && Object.keys(summary.plots).length > 0 && (
           <Card className="p-6 bg-card/50 backdrop-blur-sm border-border/50">
             <h3 className="text-lg font-semibold text-foreground mb-4">Available Visualizations</h3>
-            <div className="grid grid-cols-2 gap-3">
-              {Object.entries(summary.plots).map(([key, path]: any) => (
-                <div key={key} className="p-3 rounded-lg bg-muted/50 text-sm">
-                  <span className="text-muted-foreground">{key.replace(/_/g, ' ')}</span>
-                  <p className="text-xs text-muted-foreground/70 truncate mt-1">{path}</p>
-                </div>
-              ))}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {Object.entries(summary.plots).map(([key, url]: any) => {
+                const imageUrl = buildStaticUrl(url);
+                return (
+                  <div key={key} className="rounded-lg border border-border/40 bg-muted/20 overflow-hidden">
+                    <div className="px-3 py-2 border-b border-border/30">
+                      <span className="text-sm font-medium text-foreground">
+                        {key.replace(/_/g, ' ')}
+                      </span>
+                    </div>
+                    <div className="bg-background/80 flex items-center justify-center">
+                      <img
+                        src={imageUrl || undefined}
+                        alt={key}
+                        className="w-full h-52 object-contain"
+                        loading="lazy"
+                      />
+                    </div>
+                    <p className="px-3 py-2 text-[11px] text-muted-foreground break-all">{imageUrl || url}</p>
+                  </div>
+                );
+              })}
             </div>
           </Card>
         )}
