@@ -13,25 +13,44 @@ A modern fullstack web application that orchestrates Python ML scripts for grade
 
 ### 1. Database Setup
 
-If you are running PostgreSQL locally, create the database and user once after cloning:
+Choose one of the two options below. The `DATABASE_URL` in `server/.env` must match whichever option you use; otherwise you will see errors like `User postgres was denied access on the database grades.public`.
+
+**Option A: Use the bundled Docker database (recommended for a quick start)**
 
 ```bash
-# open the PostgreSQL shell (adjust to your environment)
-psql postgres
-
--- inside psql
-CREATE DATABASE grade_predictor;
-CREATE USER grade_predictor_user WITH PASSWORD 'change-me';
-GRANT ALL PRIVILEGES ON DATABASE grade_predictor TO grade_predictor_user;
-\q
+docker compose up -d db
 ```
 
-Update `server/.env` with the connection string, for example:
+This starts Postgres with:
+
+- database: `grades`
+- user: `postgres`
+- password: `postgres`
+
+Your `server/.env` should contain:
 
 ```
-DATABASE_URL="postgresql://grade_predictor_user:change-me@localhost:5432/grade_predictor"
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/grades?schema=public"
 JWT_SECRET="replace-with-long-random-string"
 PYTHON_BIN="python3" # override if needed
+```
+
+**Option B: Use an existing/local Postgres instance**
+
+Create a database and user you control, then grant privileges:
+
+```bash
+psql -U postgres -c "CREATE DATABASE grades;"
+psql -U postgres -c "CREATE USER grade_app WITH PASSWORD 'change-me';"
+psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE grades TO grade_app;"
+```
+
+Then point `server/.env` to that user:
+
+```
+DATABASE_URL="postgresql://grade_app:change-me@localhost:5432/grades?schema=public"
+JWT_SECRET="replace-with-long-random-string"
+PYTHON_BIN="python3"
 ```
 
 ### 2. Backend Setup
