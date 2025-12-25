@@ -285,8 +285,9 @@ def main():
         if isinstance(yhat_tr, (list, tuple)): yhat_tr = np.array(yhat_tr)
         if isinstance(yhat_te, (list, tuple)): yhat_te = np.array(yhat_te)
         r2_tr = r2_score(ytr, yhat_tr); r2_te = r2_score(yte, yhat_te)
-        rmse_tr = mean_squared_error(ytr, yhat_tr, squared=False)
-        rmse_te = mean_squared_error(yte, yhat_te, squared=False)
+        # Older sklearn may not support squared=False; take sqrt manually
+        rmse_tr = math.sqrt(mean_squared_error(ytr, yhat_tr))
+        rmse_te = math.sqrt(mean_squared_error(yte, yhat_te))
         return {"name":name,"r2_tr":r2_tr,"r2_te":r2_te,"rmse_tr":rmse_tr,"rmse_te":rmse_te, "yhat_te":yhat_te}
 
     def eval_mlp(model, scaler, Xtr, ytr, Xte, yte):
@@ -297,8 +298,8 @@ def main():
             yhat_te = model(torch.tensor(Xte_s, dtype=torch.float32)).numpy().reshape(-1)
         from sklearn.metrics import r2_score, mean_squared_error
         r2_tr = r2_score(ytr, yhat_tr); r2_te = r2_score(yte, yhat_te)
-        rmse_tr = mean_squared_error(ytr, yhat_tr, squared=False)
-        rmse_te = mean_squared_error(yte, yhat_te, squared=False)
+        rmse_tr = math.sqrt(mean_squared_error(ytr, yhat_tr))
+        rmse_te = math.sqrt(mean_squared_error(yte, yhat_te))
         return {"name":"MLP","r2_tr":r2_tr,"r2_te":r2_te,"rmse_tr":rmse_tr,"rmse_te":rmse_te, "yhat_te":yhat_te}
 
     results = []

@@ -24,10 +24,26 @@ function toStaticPath(absPath) {
 }
 
 function normalizePlotMap(plots) {
-  if (!plots || typeof plots !== 'object') return {};
-  return Object.fromEntries(
-    Object.entries(plots).map(([key, value]) => [key, toStaticPath(value)])
-  );
+  if (!plots) return {};
+
+  // If an array of paths, convert to keyed object based on filename
+  if (Array.isArray(plots)) {
+    const entries = plots
+      .filter(Boolean)
+      .map((p) => {
+        const key = path.basename(p, path.extname(p)) || 'plot';
+        return [key, toStaticPath(p)];
+      });
+    return Object.fromEntries(entries);
+  }
+
+  if (typeof plots === 'object') {
+    return Object.fromEntries(
+      Object.entries(plots).map(([key, value]) => [key, toStaticPath(value)])
+    );
+  }
+
+  return {};
 }
 
 // Configure multer for file uploads
@@ -288,9 +304,31 @@ router.get('/summary', authenticateToken, async (req, res) => {
       return res.json({ hasModel: false });
     }
 
+    // Standardize metrics shape for frontend
+    const metrics = (() => {
+      const m = lastSucceeded.metrics;
+      if (!m) return {};
+      if (!Array.isArray(m) && typeof m === 'object') return m;
+      if (Array.isArray(m)) {
+        // Pick best model by smallest RMSE (or first as fallback)
+        const pick = [...m].sort((a, b) => {
+          const ra = Number(a.RMSE ?? a.rmse ?? Infinity);
+          const rb = Number(b.RMSE ?? b.rmse ?? Infinity);
+          return ra - rb;
+        })[0] || m[0];
+        return {
+          rmse: Number(pick?.RMSE ?? pick?.rmse ?? 0),
+          mae: Number(pick?.MAE ?? pick?.mae ?? 0),
+          r2: Number(pick?.R2 ?? pick?.r2 ?? 0) || null,
+          accuracy: Number(pick?.accuracy ?? pick?.Accuracy ?? 0) || null
+        };
+      }
+      return {};
+    })();
+
     res.json({
       hasModel: true,
-      metrics: lastSucceeded.metrics,
+      metrics,
       plots: normalizePlotMap(lastSucceeded.plots),
       artifactsDir: lastSucceeded.artifactsDir,
       createdAt: lastSucceeded.createdAt,

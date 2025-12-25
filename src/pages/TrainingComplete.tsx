@@ -68,7 +68,9 @@ export default function TrainingComplete() {
                 <h3 className="font-semibold text-foreground">Accuracy</h3>
               </div>
               <p className="text-3xl font-bold text-foreground">
-                {((summary.metrics.accuracy || 0) * 100).toFixed(1)}%
+                {summary.metrics.accuracy != null
+                  ? `${(summary.metrics.accuracy * 100).toFixed(1)}%`
+                  : '—'}
               </p>
             </Card>
 
@@ -78,7 +80,7 @@ export default function TrainingComplete() {
                 <h3 className="font-semibold text-foreground">RMSE</h3>
               </div>
               <p className="text-3xl font-bold text-foreground">
-                {(summary.metrics.rmse || 0).toFixed(3)}
+                {summary.metrics.rmse != null ? summary.metrics.rmse.toFixed(3) : '—'}
               </p>
             </Card>
 
@@ -88,7 +90,7 @@ export default function TrainingComplete() {
                 <h3 className="font-semibold text-foreground">R² Score</h3>
               </div>
               <p className="text-3xl font-bold text-foreground">
-                {(summary.metrics.r2 || 0).toFixed(3)}
+                {summary.metrics.r2 != null ? summary.metrics.r2.toFixed(3) : '—'}
               </p>
             </Card>
           </div>

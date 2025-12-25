@@ -11,6 +11,10 @@ Fixed prediction script:
 import argparse, os, sys, json, numpy as np, datetime, joblib
 from pathlib import Path
 
+# Force headless backend so plotting works in containers
+import matplotlib
+matplotlib.use("Agg")
+
 try:
     import matplotlib.pyplot as plt
     import seaborn as sns  # optional

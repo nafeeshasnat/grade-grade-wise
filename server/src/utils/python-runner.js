@@ -63,6 +63,13 @@ export async function runPythonTrain(orgId, runId, trainJsonPath, configJsonPath
   const logPath = path.join(outDir, 'train.log');
   const logHandle = await fs.open(logPath, 'a'); // append; create if missing
 
+  // Emit an immediate log line so SSE clients don't sit on an empty file
+  try {
+    await logHandle.write(`[INFO] Training started for run ${runId} at ${new Date().toISOString()}\n`);
+  } catch (e) {
+    console.error('Failed to write initial log line:', e);
+  }
+
   // ALSO keep a copy in config.json under outDir (some UIs expect it there)
   try {
     await fs.copyFile(configJsonPath, path.join(outDir, 'config.json'));

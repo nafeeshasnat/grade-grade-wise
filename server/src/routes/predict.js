@@ -14,11 +14,20 @@ const STORAGE_ROOT = path.join(__dirname, '../../storage');
 
 function toStaticPath(absPath) {
   if (!absPath) return null;
-  const normalized = path.normalize(absPath);
+
+  // Already a URL or static path
+  if (typeof absPath === 'string') {
+    if (absPath.startsWith('http://') || absPath.startsWith('https://')) return absPath;
+    if (absPath.startsWith('/static/')) return absPath;
+    if (absPath.startsWith('static/')) return `/${absPath}`;
+  }
+
+  const normalized = path.normalize(String(absPath));
   if (normalized.startsWith(STORAGE_ROOT)) {
     const rel = normalized.slice(STORAGE_ROOT.length).replace(/\\/g, '/');
     return `/static${rel}`;
   }
+
   return null;
 }
 
@@ -122,15 +131,17 @@ router.post('/', authenticateToken, upload.single('studentFile'), async (req, re
       return res.status(500).json({ error: result.error || 'Prediction failed' });
     }
 
-    const predictionResults = result.predictions || {};
+    const predictionResults = result?.predictions && typeof result.predictions === 'object'
+      ? result.predictions
+      : {};
     const inputStaticPath = toStaticPath(req.file.path);
     const outputStaticPath = toStaticPath(outFile);
     const predictionPlots = normalizePlots(result.plots);
     const predictionSummary = {
-      risk: result.risk,
-      current: result.current,
+      risk: result?.risk ?? null,
+      current: result?.current ?? null,
       ensemble: predictionResults.ensemble,
-      bestModel: result.bestModel,
+      bestModel: result?.bestModel ?? null,
       files: {
         input: inputStaticPath,
         output: outputStaticPath
@@ -145,7 +156,7 @@ router.post('/', authenticateToken, upload.single('studentFile'), async (req, re
         studentId,
         inputPath: req.file.path,
         outFile,
-        results: predictionResults,
+        results: predictionResults || {},
         summary: predictionSummary
       }
     });
