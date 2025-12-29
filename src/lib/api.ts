@@ -1,6 +1,6 @@
 // Point frontend to NAS-hosted backend
-const API_URL = 'http://thisispersonal.technospective.se:1000/api';
-// const API_URL = 'http://localhost:3000/api'
+// const API_URL = 'http://thisispersonal.technospective.se:1000/api';
+const API_URL = 'http://localhost:3000/api'
 const API_BASE = API_URL.replace(/\/api$/, '');
 
 export const getApiBase = () => API_BASE;
@@ -127,9 +127,12 @@ class ApiClient {
   }
 
   // Predictions
-  async predict(studentFile: File) {
+  async predict(studentFile: File, creditHours?: number | null) {
     const formData = new FormData();
     formData.append('studentFile', studentFile);
+    if (creditHours !== undefined && creditHours !== null && !Number.isNaN(creditHours)) {
+      formData.append('creditHours', String(creditHours));
+    }
 
     return this.fetch('/predict', {
       method: 'POST',

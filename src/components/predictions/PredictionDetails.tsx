@@ -1,4 +1,6 @@
-import { buildStaticUrl } from '@/lib/api';
+import { ChartContainer, ChartLegend, ChartLegendContent, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
+import { Card } from '@/components/ui/card';
+import { Bar, BarChart, CartesianGrid, Line, LineChart, XAxis, YAxis } from 'recharts';
 
 type PredictionRecord = {
   id?: string;
@@ -14,34 +16,163 @@ type PredictionRecord = {
 
 interface PredictionDetailsProps {
   prediction: PredictionRecord;
+  profile?: {
+    studentId: string;
+    department?: string;
+    sscGpa?: number;
+    hscGpa?: number;
+    gender?: string;
+    cgpaTrend: { label: string; value: number }[];
+  };
 }
 
-const formatValue = (value: any) =>
-  typeof value === 'number'
-    ? value.toFixed(3)
-    : typeof value === 'undefined' || value === null
-    ? '-'
-    : String(value);
+const MODEL_COLORS: Record<string, string> = {
+  DecisionTree: '#0ea5e9',
+  RandomForest: '#6366f1',
+  LightGBM: '#22c55e',
+  SVR: '#f59e0b',
+  MLP: '#f43f5e',
+  History: '#64748b'
+};
 
-const toEntries = (obj: Record<string, any>) =>
-  Object.entries(obj || {}).filter(([_, value]) => value !== undefined && value !== null);
+const MODEL_SHORT_NAMES: Record<string, string> = {
+  DecisionTree: 'DT',
+  RandomForest: 'RF',
+  LightGBM: 'LGBM',
+  SVR: 'SVR',
+  MLP: 'MLP',
+  History: 'History'
+};
 
-export function PredictionDetails({ prediction }: PredictionDetailsProps) {
+const formatDecimal = (value: unknown, decimals: number) => {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value.toFixed(decimals);
+  }
+  const parsed = typeof value === 'string' ? Number(value) : NaN;
+  if (Number.isFinite(parsed)) {
+    return parsed.toFixed(decimals);
+  }
+  return '-';
+};
+
+const formatGpa = (value: unknown) => formatDecimal(value, 2);
+
+const toNumber = (value: unknown) => {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return null;
+};
+
+const averageValues = (values?: Record<string, any>) => {
+  if (!values || typeof values !== 'object') return null;
+  const numbers = Object.values(values)
+    .map((value) => (typeof value === 'string' ? Number(value) : value))
+    .filter((value) => typeof value === 'number' && Number.isFinite(value));
+  if (!numbers.length) return null;
+  return numbers.reduce((sum, value) => sum + value, 0) / numbers.length;
+};
+
+const SummaryCard = ({
+  title,
+  value,
+  tone
+}: {
+  title: string;
+  value: string;
+  tone?: string;
+}) => (
+  <Card className={`p-4 border-border/50 ${tone || 'bg-muted/30'}`}>
+    <p className="text-xs text-muted-foreground mb-1">{title}</p>
+    <p className="text-lg font-semibold text-foreground">{value || '—'}</p>
+  </Card>
+);
+
+export function PredictionDetails({ prediction, profile }: PredictionDetailsProps) {
   const summary = prediction.summary || {};
   const predictions = prediction.results || {};
 
   const finalCgpa = predictions.final_cgpa || {};
   const nextSem = predictions.next_sem_gpa || {};
   const ensemble = summary.ensemble || predictions.ensemble || {};
+  const loadAdjusted = summary.loadAdjusted || summary.load_adjusted || null;
+  const loadContext = loadAdjusted?.context || null;
   const riskLevel = summary.risk || 'Unknown';
   const current = summary.current || {};
   const bestModel = summary.bestModel || prediction.bestModel;
+  const modelNames = Array.from(
+    new Set([...Object.keys(finalCgpa), ...Object.keys(nextSem)])
+  );
 
-  const files = summary.files || {};
-  const inputUrl = buildStaticUrl(files.input || prediction.inputFileUrl || prediction.inputPath || null);
-  const outputUrl = buildStaticUrl(files.output || prediction.outFileUrl || prediction.outFile || null);
+  const studentId = prediction.studentId || profile?.studentId;
+  const creditHours = toNumber(summary.creditHours ?? summary.credit_hours);
+  const courseLoad = toNumber(summary.courseLoad ?? summary.course_load);
+  const baselineFinal = ensemble.final_cgpa_mean ?? averageValues(finalCgpa);
+  const baselineNext = ensemble.next_sem_gpa_mean ?? averageValues(nextSem);
+  const adjustedFinal =
+    loadAdjusted?.ensemble?.final_cgpa_mean ?? averageValues(loadAdjusted?.final_cgpa);
+  const adjustedNext =
+    loadAdjusted?.ensemble?.next_sem_gpa_mean ?? averageValues(loadAdjusted?.next_sem_gpa);
+  const deltaFinal = loadAdjusted?.delta?.final_cgpa ?? null;
+  const deltaNext = loadAdjusted?.delta?.next_sem_gpa ?? null;
+  const comparisonData = [
+    {
+      label: 'Next',
+      baseline: baselineNext,
+      adjusted: adjustedNext
+    },
+    {
+      label: 'Final',
+      baseline: baselineFinal,
+      adjusted: adjustedFinal
+    }
+  ].filter((entry) => entry.baseline != null || entry.adjusted != null);
+  const showCreditComparison = creditHours != null || adjustedFinal != null || adjustedNext != null;
+  const semesterCount = profile?.cgpaTrend?.length || 0;
+  const cgpaStart = semesterCount ? profile?.cgpaTrend?.[0] : null;
+  const cgpaEnd = semesterCount ? profile?.cgpaTrend?.[semesterCount - 1] : null;
 
-  const plotSources = prediction.plots || summary.plots || {};
+  const hasTrend = profile?.cgpaTrend && profile.cgpaTrend.length > 0;
+  const trajectoryData = hasTrend
+    ? (() => {
+        const trend = profile?.cgpaTrend || [];
+        const lastPoint = trend[trend.length - 1];
+        const baseRows = trend.map((point, index) => {
+          const row: Record<string, any> = {
+            label: point.label,
+            History: point.value
+          };
+          if (index === trend.length - 1) {
+            modelNames.forEach((model) => {
+              row[model] = point.value;
+            });
+          }
+          return row;
+        });
+
+        const nextRow: Record<string, any> = { label: 'Next' };
+        const finalRow: Record<string, any> = { label: 'Final' };
+        modelNames.forEach((model) => {
+          if (nextSem[model] != null) {
+            nextRow[model] = nextSem[model];
+          }
+          if (finalCgpa[model] != null) {
+            finalRow[model] = finalCgpa[model];
+          }
+        });
+
+        if (lastPoint) {
+          baseRows.push(nextRow, finalRow);
+        }
+        return baseRows;
+      })()
+    : [];
 
   const riskTone =
     riskLevel?.toLowerCase() === 'high'
@@ -52,80 +183,169 @@ export function PredictionDetails({ prediction }: PredictionDetailsProps) {
 
   return (
     <div className="space-y-6">
-      <div className="p-4 rounded-lg bg-primary/10 border border-primary/20">
-        <p className="text-sm text-muted-foreground mb-1">Student ID</p>
-        <p className="text-xl font-bold text-foreground">{prediction.studentId || 'Unknown'}</p>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {studentId && (
+          <SummaryCard title="Student ID" value={String(studentId)} tone="bg-primary/10 border-primary/20" />
+        )}
+        <SummaryCard title="Risk Level" value={riskLevel} tone={riskTone} />
+        {bestModel && (
+          <SummaryCard
+            title="Best Model"
+            value={String(bestModel)}
+            tone="bg-accent/10 border-accent/30"
+          />
+        )}
       </div>
 
-      <div className={`p-4 rounded-lg border ${riskTone}`}>
-        <p className="text-sm text-muted-foreground mb-1">Risk Level</p>
-        <p className="text-lg font-bold capitalize">{riskLevel}</p>
-      </div>
-
-      {bestModel && (
-        <div className="p-3 rounded-lg bg-accent/10 border border-accent/30">
-          <p className="text-xs text-muted-foreground mb-1">Best Performing Model (from training)</p>
-          <p className="text-sm font-semibold text-foreground">{String(bestModel)}</p>
+      {profile && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <SummaryCard title="Department" value={profile.department || '—'} />
+          <SummaryCard title="Gender" value={profile.gender || '—'} />
+          <SummaryCard title="SSC GPA" value={formatGpa(profile.sscGpa)} />
+          <SummaryCard title="HSC GPA" value={formatGpa(profile.hscGpa)} />
+          <SummaryCard title="Semesters" value={semesterCount ? String(semesterCount) : '—'} />
+          <SummaryCard title="Latest Sem GPA" value={formatGpa(current.last_sem_gpa)} />
+          <SummaryCard title="Current CGPA" value={formatGpa(current.current_cgpa)} />
+          <SummaryCard
+            title="CGPA Trend"
+            value={
+              cgpaStart && cgpaEnd
+                ? `${cgpaStart.label}: ${formatGpa(cgpaStart.value)} → ${cgpaEnd.label}: ${formatGpa(cgpaEnd.value)}`
+                : '—'
+            }
+          />
         </div>
       )}
 
-      {(current.last_sem_gpa || current.current_cgpa) && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="p-4 rounded-lg bg-muted/30">
-            <p className="text-sm text-muted-foreground mb-1">Latest Semester GPA</p>
-            <p className="text-lg font-semibold text-foreground">{formatValue(current.last_sem_gpa)}</p>
-            {current.last_sem_index && (
-              <p className="text-xs text-muted-foreground mt-1">Semester {current.last_sem_index}</p>
-            )}
-          </div>
-          <div className="p-4 rounded-lg bg-muted/30">
-            <p className="text-sm text-muted-foreground mb-1">Current CGPA</p>
-            <p className="text-lg font-semibold text-foreground">{formatValue(current.current_cgpa)}</p>
-          </div>
-        </div>
-      )}
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="p-4 rounded-lg bg-muted/20 border border-border/40">
-          <p className="text-sm font-semibold text-foreground mb-3">Final CGPA by Model</p>
-          <div className="space-y-2">
-            {toEntries(finalCgpa).map(([model, value]) => {
-              const highlight = bestModel && String(bestModel).toLowerCase() === model.toLowerCase();
-              return (
-                <div
+      {trajectoryData.length > 0 && (
+        <Card className="p-6 bg-card/40 border-border/50 space-y-4">
+          <h4 className="text-lg font-semibold text-foreground">Performance Trajectory</h4>
+          <ChartContainer
+            config={{
+              History: { label: MODEL_SHORT_NAMES.History, color: MODEL_COLORS.History },
+              ...Object.fromEntries(
+                modelNames.map((model) => [
+                  model,
+                  { label: MODEL_SHORT_NAMES[model] || model, color: MODEL_COLORS[model] || '#94a3b8' }
+                ])
+              )
+            }}
+            className="h-72 w-full aspect-auto"
+          >
+            <LineChart data={trajectoryData}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="label" />
+              <YAxis domain={[0, 4]} tickFormatter={(value) => formatGpa(value)} />
+              <ChartTooltip content={<ChartTooltipContent formatter={(value) => formatGpa(value)} />} />
+              <ChartLegend content={<ChartLegendContent />} />
+              <Line type="monotone" dataKey="History" stroke="var(--color-History)" strokeWidth={2} dot={false} />
+              {modelNames.map((model) => (
+                <Line
                   key={model}
-                  className={`flex justify-between text-sm rounded-md px-3 py-2 ${
-                    highlight ? 'bg-primary/10 border border-primary/40' : 'bg-background/40'
-                  }`}
-                >
-                  <span className="text-muted-foreground">
-                    {model} {highlight && <span className="text-primary text-xs font-semibold">(Best)</span>}
-                  </span>
-                  <span className="font-medium text-foreground">{formatValue(value)}</span>
-                </div>
-              );
-            })}
-            {toEntries(finalCgpa).length === 0 && (
-              <p className="text-xs text-muted-foreground">No final CGPA predictions available.</p>
-            )}
-          </div>
-        </div>
+                  type="monotone"
+                  dataKey={model}
+                  stroke={`var(--color-${model})`}
+                  strokeWidth={2}
+                  strokeDasharray="4 4"
+                  dot={false}
+                  connectNulls
+                />
+              ))}
+            </LineChart>
+          </ChartContainer>
+        </Card>
+      )}
 
-        <div className="p-4 rounded-lg bg-muted/20 border border-border/40">
-          <p className="text-sm font-semibold text-foreground mb-3">Next Semester GPA by Model</p>
-          <div className="space-y-2">
-            {toEntries(nextSem).map(([model, value]) => (
-              <div key={model} className="flex justify-between text-sm rounded-md px-3 py-2 bg-background/40">
-                <span className="text-muted-foreground">{model}</span>
-                <span className="font-medium text-foreground">{formatValue(value)}</span>
-              </div>
-            ))}
-            {toEntries(nextSem).length === 0 && (
-              <p className="text-xs text-muted-foreground">No next semester predictions available.</p>
-            )}
-          </div>
+      {modelNames.length > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {modelNames.map((model) => {
+            const highlight = bestModel && String(bestModel).toLowerCase() === model.toLowerCase();
+            return (
+              <Card key={model} className="p-4 bg-card/50 border-border/50 space-y-3">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-foreground">{model}</p>
+                    <p className="text-xs text-muted-foreground">Risk Level</p>
+                  </div>
+                  {highlight && (
+                    <span className="text-xs font-semibold text-primary">Best</span>
+                  )}
+                </div>
+                <div className="text-sm font-semibold text-foreground capitalize">{riskLevel}</div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <p className="text-xs text-muted-foreground">Next Semester</p>
+                    <p className="text-lg font-semibold text-foreground">{formatGpa(nextSem[model])}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Final CGPA</p>
+                    <p className="text-lg font-semibold text-foreground">{formatGpa(finalCgpa[model])}</p>
+                  </div>
+                </div>
+              </Card>
+            );
+          })}
         </div>
-      </div>
+      )}
+
+      {showCreditComparison && (
+        <Card className="p-6 bg-card/40 border-border/50 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h4 className="text-lg font-semibold text-foreground">Credit Hour Impact</h4>
+              <p className="text-xs text-muted-foreground">
+                Baseline vs. load-adjusted predictions based on upcoming credit hours.
+              </p>
+            </div>
+            <div className="text-xs text-muted-foreground text-right">
+              {creditHours != null && <div>Credit Hours: {formatDecimal(creditHours, 0)}</div>}
+              {courseLoad != null && <div>Course Load: {formatDecimal(courseLoad, 0)} courses</div>}
+            </div>
+          </div>
+          {comparisonData.length > 0 && (adjustedFinal != null || adjustedNext != null) ? (
+            <ChartContainer
+              config={{
+                baseline: { label: 'Baseline', color: '#94a3b8' },
+                adjusted: { label: 'With Credit Hours', color: '#38bdf8' }
+              }}
+              className="h-64 w-full aspect-auto"
+            >
+              <BarChart data={comparisonData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="label" />
+                <YAxis domain={[0, 4]} tickFormatter={(value) => formatGpa(value)} />
+                <ChartTooltip content={<ChartTooltipContent formatter={(value) => formatGpa(value)} />} />
+                <ChartLegend content={<ChartLegendContent />} />
+                <Bar dataKey="baseline" fill="var(--color-baseline)" radius={[6, 6, 0, 0]} />
+                <Bar dataKey="adjusted" fill="var(--color-adjusted)" radius={[6, 6, 0, 0]} />
+              </BarChart>
+            </ChartContainer>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              Load-adjusted comparison is unavailable for this prediction.
+            </p>
+          )}
+          {loadContext && (
+            <div className="text-xs text-muted-foreground space-y-1">
+              <div>
+                Base load: {loadContext.base_bucket ?? '—'}{' '}
+                {loadContext.base_load != null ? `(${formatDecimal(loadContext.base_load, 2)} avg)` : ''}
+                , Requested load: {loadContext.requested_bucket ?? '—'}
+              </div>
+              <div>
+                Expected Next GPA: {formatGpa(loadContext.base_sem_expect)} →{' '}
+                {formatGpa(loadContext.requested_sem_expect)}{' '}
+                {deltaNext != null ? `(Δ ${formatDecimal(deltaNext, 3)})` : ''}
+              </div>
+              <div>
+                Expected Final GPA: {formatGpa(loadContext.base_final_expect)} →{' '}
+                {formatGpa(loadContext.requested_final_expect)}{' '}
+                {deltaFinal != null ? `(Δ ${formatDecimal(deltaFinal, 3)})` : ''}
+              </div>
+            </div>
+          )}
+        </Card>
+      )}
 
       {(ensemble.final_cgpa_mean || ensemble.next_sem_gpa_mean) && (
         <div className="p-6 rounded-lg bg-gradient-to-br from-primary/20 to-accent/20 border border-primary/30">
@@ -133,61 +353,18 @@ export function PredictionDetails({ prediction }: PredictionDetailsProps) {
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
             <div>
               <p className="text-xs text-muted-foreground">Final CGPA (Mean)</p>
-              <p className="text-3xl font-bold text-foreground">{formatValue(ensemble.final_cgpa_mean)}</p>
+              <p className="text-3xl font-bold text-foreground">{formatGpa(ensemble.final_cgpa_mean)}</p>
             </div>
             <div>
               <p className="text-xs text-muted-foreground">Next Sem GPA (Mean)</p>
-              <p className="text-3xl font-bold text-foreground">{formatValue(ensemble.next_sem_gpa_mean)}</p>
+              <p className="text-3xl font-bold text-foreground">{formatGpa(ensemble.next_sem_gpa_mean)}</p>
             </div>
-          </div>
-        </div>
-      )}
-
-      {Object.keys(plotSources).length > 0 && (
-        <div className="space-y-3">
-          <h4 className="text-lg font-semibold text-foreground">Prediction Visualizations</h4>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {Object.entries(plotSources).map(([key, url]) => {
-              const resolved = buildStaticUrl(url);
-              return (
-                <div key={key} className="rounded-lg border border-border/40 bg-muted/20 overflow-hidden">
-                  <div className="px-3 py-2 border-b border-border/30">
-                    <span className="text-sm font-medium text-foreground">{key.replace(/_/g, ' ')}</span>
-                  </div>
-                  <div className="bg-background/80 flex items-center justify-center">
-                    <img
-                      src={resolved || undefined}
-                      alt={key}
-                      className="w-full h-52 object-contain"
-                      loading="lazy"
-                    />
-                  </div>
-                  <p className="px-3 py-2 text-[11px] text-muted-foreground break-all">{resolved || url}</p>
-                </div>
-              );
-            })}
           </div>
         </div>
       )}
 
       <div className="pt-4 border-t border-border/50 text-xs text-muted-foreground space-y-2">
         <p>Predicted at: {prediction.createdAt ? new Date(prediction.createdAt).toLocaleString() : 'Unknown'}</p>
-        {inputUrl && (
-          <p>
-            Uploaded file:{' '}
-            <a href={inputUrl} target="_blank" rel="noreferrer" className="text-primary underline">
-              Download
-            </a>
-          </p>
-        )}
-        {outputUrl && (
-          <p>
-            Detailed output:{' '}
-            <a href={outputUrl} target="_blank" rel="noreferrer" className="text-primary underline">
-              Download
-            </a>
-          </p>
-        )}
         {prediction.id && (
           <p>
             Prediction ID: <span className="font-mono break-all text-foreground">{prediction.id}</span>

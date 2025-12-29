@@ -120,11 +120,17 @@ router.post('/', authenticateToken, upload.single('studentFile'), async (req, re
     const outFile = req.file.path.replace('.json', '_prediction.json');
 
     // Run prediction
+    const creditHoursRaw = req.body?.creditHours ?? req.body?.credit_hours;
+    const creditHours = creditHoursRaw !== undefined && creditHoursRaw !== null && creditHoursRaw !== ''
+      ? Number(creditHoursRaw)
+      : null;
+
     const result = await runPythonPredict(
       req.orgId,
       req.file.path,
       lastSucceeded.artifactsDir,
-      outFile
+      outFile,
+      creditHours
     );
 
     if (result.status !== 'ok') {
@@ -142,6 +148,9 @@ router.post('/', authenticateToken, upload.single('studentFile'), async (req, re
       current: result?.current ?? null,
       ensemble: predictionResults.ensemble,
       bestModel: result?.bestModel ?? null,
+      creditHours: result?.creditHours ?? null,
+      courseLoad: result?.courseLoad ?? null,
+      loadAdjusted: result?.loadAdjusted ?? null,
       files: {
         input: inputStaticPath,
         output: outputStaticPath

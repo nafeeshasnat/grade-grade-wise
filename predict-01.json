@@ -1,0 +1,38 @@
+{
+    "student_id": 400101001,
+    "ssc_gpa": 4.35,
+    "hsc_gpa": 4.10,
+    "gender": "male",
+    "birth_year": 2001,
+    "department": "CSE",
+    "semesters": {
+        "1": {
+            "attendancePercentage": 82,
+            "Algorithms": "B",
+            "Operating Systems": "B",
+            "Database Systems": "B",
+            "Data Structures": "A-"
+        },
+        "2": {
+            "attendancePercentage": 85,
+            "Artificial Intelligence": "A-",
+            "Computer Networks": "A",
+            "Operating Systems": "B",
+            "Software Engineering": "A"
+        },
+        "3": {
+            "attendancePercentage": 88,
+            "Software Engineering": "A",
+            "Computer Networks": "A-",
+            "Database Systems": "A",
+            "Algorithms": "A-"
+        },
+        "4": {
+            "attendancePercentage": 90,
+            "Artificial Intelligence": "A",
+            "Operating Systems": "A",
+            "Data Structures": "A+",
+            "Software Engineering": "A"
+        }
+    }
+}

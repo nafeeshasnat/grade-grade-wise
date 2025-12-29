@@ -45,6 +45,8 @@ export default function TrainingComplete() {
     );
   }
 
+  const summaryMetrics = summary?.metrics?.summary || summary?.metrics || {};
+
   return (
     <div className="min-h-screen bg-background p-6">
       <div className="container mx-auto max-w-4xl space-y-8">
@@ -60,7 +62,7 @@ export default function TrainingComplete() {
         </div>
 
         {/* Metrics Cards */}
-        {summary.metrics && (
+        {summaryMetrics && (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 animate-slide-up">
             <Card className="p-6 bg-card/50 backdrop-blur-sm border-border/50">
               <div className="flex items-center gap-3 mb-2">
@@ -68,8 +70,8 @@ export default function TrainingComplete() {
                 <h3 className="font-semibold text-foreground">Accuracy</h3>
               </div>
               <p className="text-3xl font-bold text-foreground">
-                {summary.metrics.accuracy != null
-                  ? `${(summary.metrics.accuracy * 100).toFixed(1)}%`
+                {summaryMetrics.accuracy != null
+                  ? `${(summaryMetrics.accuracy * 100).toFixed(1)}%`
                   : '—'}
               </p>
             </Card>
@@ -80,7 +82,7 @@ export default function TrainingComplete() {
                 <h3 className="font-semibold text-foreground">RMSE</h3>
               </div>
               <p className="text-3xl font-bold text-foreground">
-                {summary.metrics.rmse != null ? summary.metrics.rmse.toFixed(3) : '—'}
+                {summaryMetrics.rmse != null ? summaryMetrics.rmse.toFixed(3) : '—'}
               </p>
             </Card>
 
@@ -90,7 +92,7 @@ export default function TrainingComplete() {
                 <h3 className="font-semibold text-foreground">R² Score</h3>
               </div>
               <p className="text-3xl font-bold text-foreground">
-                {summary.metrics.r2 != null ? summary.metrics.r2.toFixed(3) : '—'}
+                {summaryMetrics.r2 != null ? summaryMetrics.r2.toFixed(3) : '—'}
               </p>
             </Card>
           </div>

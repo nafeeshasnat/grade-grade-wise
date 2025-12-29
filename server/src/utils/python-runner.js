@@ -174,7 +174,7 @@ export async function runPythonTrain(orgId, runId, trainJsonPath, configJsonPath
   });
 }
 
-export async function runPythonPredict(orgId, studentJsonPath, artifactsDir, outFile) {
+export async function runPythonPredict(orgId, studentJsonPath, artifactsDir, outFile, creditHours) {
   const args = [
     PREDICT_SCRIPT,
     '--org-id', orgId,
@@ -182,6 +182,10 @@ export async function runPythonPredict(orgId, studentJsonPath, artifactsDir, out
     '--artifacts-dir', artifactsDir,
     '--out-file', outFile,
   ];
+
+  if (creditHours !== undefined && creditHours !== null && creditHours !== '') {
+    args.push('--credit-hours', String(creditHours));
+  }
 
   const pythonProcess = spawn(PYTHON_BIN, args, {
     env: { ...process.env, PYTHONUNBUFFERED: '1' },

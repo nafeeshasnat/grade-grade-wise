@@ -28,11 +28,19 @@ except Exception:
 
 # ------------------------- Bounds -------------------------
 BOUNDS = {
+    "DT_MAX_DEPTH": (1, 50),
+    "DT_MIN_SAMPLES_LEAF": (1, 50),
     "RF_TREES": (50, 1000),
+    "RF_MAX_DEPTH": (1, 50),
+    "RF_MIN_SAMPLES_LEAF": (1, 50),
     "LGBM_N_ESTIMATORS": (200, 4000),
+    "LGBM_REG_ALPHA": (0.0, 10.0),
+    "LGBM_REG_LAMBDA": (0.0, 10.0),
     "MLP_HIDDEN": (16, 256),
     "MLP_EPOCHS": (50, 600),
     "MLP_PATIENCE": (10, 100),
+    "SVR_C": (0.1, 100.0),
+    "SVR_EPSILON": (0.001, 1.0),
     "TEST_SIZE": (0.10, 0.30),
     "THREADS": (2, 8),
 }
@@ -77,24 +85,22 @@ def build_features_for_final(student, GP):
     if y is None: return None, None
 
     upto = sem_nums[-2]
-    att, sem_gpas, loads = [], [], []
+    att, sem_gpas = [], []
     for s in sem_nums:
         if s <= upto:
             sem = semesters[str(s)]
             if "attendancePercentage" in sem: att.append(sem["attendancePercentage"])
             g = semester_gpa(sem, GP)
             if g is not None: sem_gpas.append(g)
-            loads.append(sum(1 for k in sem if k != "attendancePercentage"))
     avg_att = float(np.mean(att)) if att else 0.0
     gpa_trend = (sem_gpas[-1] - sem_gpas[-2]) if len(sem_gpas) >= 2 else 0.0
-    avg_load = float(np.mean(loads)) if loads else 0.0
 
     X = [
         float(student.get("ssc_gpa", 0.0)),
         float(student.get("hsc_gpa", 0.0)),
         1 if str(student.get("gender","")).lower()=="female" else 0,
         int(student.get("birth_year", 0)),
-        avg_att, gpa_trend, avg_load
+        avg_att, gpa_trend
     ]
     return X, float(y)
 
@@ -102,25 +108,68 @@ def build_features_for_next(student, GP):
     semesters = student.get("semesters", {})
     if not semesters: return None
     sem_nums = sorted(map(int, semesters.keys()))
-    att, sem_gpas, loads = [], [], []
+    att, sem_gpas = [], []
     for s in sem_nums:
         sem = semesters[str(s)]
         if "attendancePercentage" in sem: att.append(sem["attendancePercentage"])
         g = semester_gpa(sem, GP)
         if g is not None: sem_gpas.append(g)
-        loads.append(sum(1 for k in sem if k != "attendancePercentage"))
     avg_att = float(np.mean(att)) if att else 0.0
     gpa_trend = (sem_gpas[-1] - sem_gpas[-2]) if len(sem_gpas) >= 2 else 0.0
-    avg_load = float(np.mean(loads)) if loads else 0.0
 
     X = [
         float(student.get("ssc_gpa", 0.0)),
         float(student.get("hsc_gpa", 0.0)),
         1 if str(student.get("gender","")).lower()=="female" else 0,
         int(student.get("birth_year", 0)),
-        avg_att, gpa_trend, avg_load
+        avg_att, gpa_trend
     ]
     return X
+
+def build_features_for_next_label(student, GP):
+    semesters = student.get("semesters", {})
+    if not semesters: return None, None
+    sem_nums = sorted(map(int, semesters.keys()))
+    if len(sem_nums) < 2: return None, None
+    last = sem_nums[-1]
+    last_sem = semesters.get(str(last), {})
+    y = semester_gpa(last_sem, GP)
+    if y is None: return None, None
+
+    upto = sem_nums[-2]
+    att, sem_gpas = [], []
+    for s in sem_nums:
+        if s <= upto:
+            sem = semesters[str(s)]
+            if "attendancePercentage" in sem: att.append(sem["attendancePercentage"])
+            g = semester_gpa(sem, GP)
+            if g is not None: sem_gpas.append(g)
+    avg_att = float(np.mean(att)) if att else 0.0
+    gpa_trend = (sem_gpas[-1] - sem_gpas[-2]) if len(sem_gpas) >= 2 else 0.0
+
+    X = [
+        float(student.get("ssc_gpa", 0.0)),
+        float(student.get("hsc_gpa", 0.0)),
+        1 if str(student.get("gender","")).lower()=="female" else 0,
+        int(student.get("birth_year", 0)),
+        avg_att, gpa_trend
+    ]
+    return X, float(y)
+
+def average_course_load(student):
+    semesters = student.get("semesters", {})
+    if not semesters:
+        return None
+    loads = []
+    for sem in semesters.values():
+        if not isinstance(sem, dict):
+            continue
+        load = sum(1 for k in sem if k != "attendancePercentage")
+        if load > 0:
+            loads.append(load)
+    if not loads:
+        return None
+    return float(np.mean(loads))
 
 # ------------------------- Main -------------------------
 def main():
@@ -147,16 +196,43 @@ def main():
         if lo is not None: v = max(lo, v)
         if hi is not None: v = min(hi, v)
         return v
+    def clamp_int(name, default):
+        return int(round(clamp(name, default)))
+    def parse_depth(name, default=0):
+        try:
+            v = int(cfg.get(name, default))
+        except Exception:
+            v = default
+        if v <= 0:
+            return None
+        return int(clamp(name, v))
+    def parse_bool(name, default=True):
+        v = cfg.get(name, default)
+        if isinstance(v, str):
+            return v.lower() == "true"
+        return bool(v)
 
     RANDOM_SEED = int(cfg.get("RANDOM_SEED", 42))
     THREADS     = int(clamp("THREADS", 4))
     TEST_SIZE   = float(clamp("TEST_SIZE", 0.2))
+    DT_ENABLE   = parse_bool("DT_ENABLE", True)
+    DT_MAX_DEPTH = parse_depth("DT_MAX_DEPTH", 0)
+    DT_MIN_SAMPLES_LEAF = clamp_int("DT_MIN_SAMPLES_LEAF", 1)
+    RF_ENABLE   = parse_bool("RF_ENABLE", True)
     RF_TREES    = int(clamp("RF_TREES", 400))
+    RF_MAX_DEPTH = parse_depth("RF_MAX_DEPTH", 0)
+    RF_MIN_SAMPLES_LEAF = clamp_int("RF_MIN_SAMPLES_LEAF", 1)
+    LGBM_ENABLE = parse_bool("LGBM_ENABLE", True)
     LGBM_N_EST  = int(clamp("LGBM_N_ESTIMATORS", 2000))
+    LGBM_REG_ALPHA = float(clamp("LGBM_REG_ALPHA", 0.0))
+    LGBM_REG_LAMBDA = float(clamp("LGBM_REG_LAMBDA", 0.0))
+    MLP_ENABLE  = parse_bool("MLP_ENABLE", True)
     MLP_HIDDEN  = int(clamp("MLP_HIDDEN", 64))
     MLP_EPOCHS  = int(clamp("MLP_EPOCHS", 300))
     MLP_PATIENCE= int(clamp("MLP_PATIENCE", 40))
-    SVR_ENABLE  = bool(cfg.get("SVR_ENABLE", True))
+    SVR_ENABLE  = parse_bool("SVR_ENABLE", True)
+    SVR_C       = float(clamp("SVR_C", 10.0))
+    SVR_EPSILON = float(clamp("SVR_EPSILON", 0.1))
     RISK_HIGH_MAX = float(cfg.get("RISK_HIGH_MAX", 3.30))
     RISK_MED_MAX  = float(cfg.get("RISK_MED_MAX", 3.50))
     GRADE_POINTS = cfg.get("GRADE_POINTS", {
@@ -178,21 +254,76 @@ def main():
 
     # Build datasets
     X_final, y_final = [], []
-    X_next, y_next = [], []   # y_next not used for supervised next-sem label here; kept for symmetry
+    X_next, y_next = [], []
+    avg_course_loads = []
+    load_gpa_sums = {i: 0.0 for i in range(1, 8)}
+    load_gpa_counts = {i: 0 for i in range(1, 8)}
 
     for student in data:
         Xf, yf = build_features_for_final(student, GRADE_POINTS)
         if Xf is not None and yf is not None:
             X_final.append(Xf); y_final.append(yf)
-        Xn = build_features_for_next(student, GRADE_POINTS)
-        if Xn is not None:
+            avg_load = average_course_load(student)
+            if avg_load is not None:
+                avg_course_loads.append(avg_load)
+        Xn, yn = build_features_for_next_label(student, GRADE_POINTS)
+        if Xn is not None and yn is not None:
             X_next.append(Xn)
+            y_next.append(yn)
 
-    X_final = np.array(X_final, float) if len(X_final) else np.empty((0,7))
+        semesters = student.get("semesters", {})
+        if isinstance(semesters, dict):
+            for sem in semesters.values():
+                if not isinstance(sem, dict):
+                    continue
+                load = sum(1 for k in sem if k != "attendancePercentage")
+                if load <= 0:
+                    continue
+                sem_gpa = semester_gpa(sem, GRADE_POINTS)
+                if sem_gpa is None:
+                    continue
+                bucket = min(7, max(1, int(load)))
+                load_gpa_sums[bucket] += float(sem_gpa)
+                load_gpa_counts[bucket] += 1
+
+    feat_names = ["ssc_gpa","hsc_gpa","gender_bin","birth_year","avg_attendance","gpa_trend"]
+    feature_count = len(feat_names)
+    X_final = np.array(X_final, float) if len(X_final) else np.empty((0, feature_count))
     y_final = np.array(y_final, float) if len(y_final) else np.empty((0,))
-    X_next  = np.array(X_next,  float) if len(X_next)  else np.empty((0,7))
+    X_next  = np.array(X_next,  float) if len(X_next)  else np.empty((0, feature_count))
+    y_next  = np.array(y_next,  float) if len(y_next)  else np.empty((0,))
 
-    feat_names = ["ssc_gpa","hsc_gpa","gender_bin","birth_year","avg_attendance","gpa_trend","avg_course_load"]
+    semester_gpa_by_load = {}
+    total_gpa_sum = 0.0
+    total_gpa_count = 0
+    for load, total in load_gpa_sums.items():
+        count = load_gpa_counts[load]
+        if count > 0:
+            semester_gpa_by_load[str(load)] = float(total / count)
+            total_gpa_sum += total
+            total_gpa_count += count
+
+    overall_semester_gpa = float(total_gpa_sum / total_gpa_count) if total_gpa_count else None
+
+    final_cgpa_sums = {i: 0.0 for i in range(1, 8)}
+    final_cgpa_counts = {i: 0 for i in range(1, 8)}
+    for avg_load, final_cgpa in zip(avg_course_loads, y_final):
+        if avg_load is None:
+            continue
+        bucket = min(7, max(1, int(round(avg_load))))
+        final_cgpa_sums[bucket] += float(final_cgpa)
+        final_cgpa_counts[bucket] += 1
+
+    final_cgpa_by_load = {
+        str(load): float(final_cgpa_sums[load] / final_cgpa_counts[load])
+        for load in range(1, 8)
+        if final_cgpa_counts[load] > 0
+    }
+    overall_final_cgpa = None
+    if len(y_final):
+        overall_final_cgpa = float(np.mean(y_final))
+
+    baseline_course_load = float(np.mean(avg_course_loads)) if avg_course_loads else None
 
     # Models
     from sklearn.tree import DecisionTreeRegressor
@@ -200,41 +331,10 @@ def main():
     from sklearn.svm import SVR
     from sklearn.preprocessing import StandardScaler
     import lightgbm as lgb
-    from sklearn.metrics import r2_score, mean_squared_error, accuracy_score
+    from sklearn.metrics import r2_score, mean_squared_error, accuracy_score, mean_absolute_error
 
     # Split for evaluation
     from sklearn.model_selection import train_test_split as _tts
-    Xf_tr, Xf_te, yf_tr, yf_te = _tts(X_final, y_final, test_size=TEST_SIZE, random_state=RANDOM_SEED)
-
-    # Train classical models
-    dt  = DecisionTreeRegressor(random_state=RANDOM_SEED)
-    rf  = RandomForestRegressor(n_estimators=RF_TREES, random_state=RANDOM_SEED, n_jobs=-1)
-    svr = SVR(kernel="rbf", C=10.0, gamma="scale") if SVR_ENABLE else None
-    lgbm = lgb.LGBMRegressor(
-        n_estimators=LGBM_N_EST,
-        learning_rate=0.03,
-        max_depth=-1,
-        subsample=0.8,
-        colsample_bytree=0.8,
-        random_state=RANDOM_SEED,
-        n_jobs=-1
-    )
-
-    dt.fit(Xf_tr, yf_tr)
-    rf.fit(Xf_tr, yf_tr)
-    if SVR_ENABLE: svr.fit(Xf_tr, yf_tr)
-
-    # LightGBM with early stopping
-    Xtr_lgb, Xval_lgb, ytr_lgb, yval_lgb = _tts(Xf_tr, yf_tr, test_size=0.2, random_state=RANDOM_SEED)
-    evals_result = {}
-    lgbm.fit(
-        Xtr_lgb, ytr_lgb,
-        eval_set=[(Xtr_lgb, ytr_lgb), (Xval_lgb, yval_lgb)],
-        eval_names=["train", "valid"],
-        eval_metric="rmse",
-        callbacks=[lgb.early_stopping(stopping_rounds=100, verbose=False),
-                   lgb.record_evaluation(evals_result)]
-    )
 
     # MLP
     import torch, torch.nn as nn
@@ -259,12 +359,15 @@ def main():
         opt = torch.optim.Adam(model.parameters(), lr=lr)
         loss_fn = nn.MSELoss()
         best = math.inf; best_state = None; patience_ctr = 0
+        history = {"train": [], "valid": []}
         for ep in range(epochs):
             model.train(); opt.zero_grad()
             pred = model(xt); loss = loss_fn(pred, yt); loss.backward(); opt.step()
             model.eval()
             with torch.no_grad():
                 vloss = loss_fn(model(xv), yv).item()
+            history["train"].append(float(loss.item()))
+            history["valid"].append(float(vloss))
             if vloss < best - 1e-6:
                 best = vloss; best_state = {k:v.clone() for k,v in model.state_dict().items()}
                 patience_ctr = 0
@@ -274,10 +377,7 @@ def main():
                 break
         if best_state is not None:
             model.load_state_dict(best_state)
-        return model, scaler
-
-    Xtr_mlp, Xte_mlp, ytr_mlp, yte_mlp = _tts(Xf_tr, yf_tr, test_size=0.2, random_state=RANDOM_SEED)
-    mlp_model, mlp_scaler = train_mlp(Xtr_mlp, ytr_mlp, Xte_mlp, yte_mlp, epochs=MLP_EPOCHS, patience=MLP_PATIENCE, hid=MLP_HIDDEN)
+        return model, scaler, history
 
     # Evaluate
     def eval_model(m, Xtr, ytr, Xte, yte, name):
@@ -288,40 +388,254 @@ def main():
         # Older sklearn may not support squared=False; take sqrt manually
         rmse_tr = math.sqrt(mean_squared_error(ytr, yhat_tr))
         rmse_te = math.sqrt(mean_squared_error(yte, yhat_te))
-        return {"name":name,"r2_tr":r2_tr,"r2_te":r2_te,"rmse_tr":rmse_tr,"rmse_te":rmse_te, "yhat_te":yhat_te}
+        mae_tr = mean_absolute_error(ytr, yhat_tr)
+        mae_te = mean_absolute_error(yte, yhat_te)
+        return {
+            "name": name,
+            "r2_tr": r2_tr,
+            "r2_te": r2_te,
+            "rmse_tr": rmse_tr,
+            "rmse_te": rmse_te,
+            "mae_tr": mae_tr,
+            "mae_te": mae_te,
+            "yhat_te": yhat_te
+        }
 
     def eval_mlp(model, scaler, Xtr, ytr, Xte, yte):
-        Xtr_s = mlp_scaler.transform(Xtr); Xte_s = mlp_scaler.transform(Xte)
+        Xtr_s = scaler.transform(Xtr); Xte_s = scaler.transform(Xte)
         import torch
         with torch.no_grad():
             yhat_tr = model(torch.tensor(Xtr_s, dtype=torch.float32)).numpy().reshape(-1)
             yhat_te = model(torch.tensor(Xte_s, dtype=torch.float32)).numpy().reshape(-1)
-        from sklearn.metrics import r2_score, mean_squared_error
         r2_tr = r2_score(ytr, yhat_tr); r2_te = r2_score(yte, yhat_te)
         rmse_tr = math.sqrt(mean_squared_error(ytr, yhat_tr))
         rmse_te = math.sqrt(mean_squared_error(yte, yhat_te))
-        return {"name":"MLP","r2_tr":r2_tr,"r2_te":r2_te,"rmse_tr":rmse_tr,"rmse_te":rmse_te, "yhat_te":yhat_te}
+        mae_tr = mean_absolute_error(ytr, yhat_tr)
+        mae_te = mean_absolute_error(yte, yhat_te)
+        return {
+            "name": "MLP",
+            "r2_tr": r2_tr,
+            "r2_te": r2_te,
+            "rmse_tr": rmse_tr,
+            "rmse_te": rmse_te,
+            "mae_tr": mae_tr,
+            "mae_te": mae_te,
+            "yhat_te": yhat_te
+        }
 
-    results = []
-    results.append(eval_model(dt, Xf_tr, yf_tr, Xf_te, yf_te, "DecisionTree"))
-    results.append(eval_model(rf, Xf_tr, yf_tr, Xf_te, yf_te, "RandomForest"))
-    if SVR_ENABLE: results.append(eval_model(svr, Xf_tr, yf_tr, Xf_te, yf_te, "SVR"))
-    # lgbm has .predict
-    results.append(eval_model(lgbm, Xf_tr, yf_tr, Xf_te, yf_te, "LightGBM"))
-    results.append(eval_mlp(mlp_model, mlp_scaler, Xf_tr, yf_tr, Xf_te, yf_te))
+    class MLPWrapper:
+        def __init__(self, model, scaler):
+            self.model = model
+            self.scaler = scaler
+
+        def predict(self, X):
+            Xs = self.scaler.transform(X)
+            with torch.no_grad():
+                return self.model(torch.tensor(Xs, dtype=torch.float32)).numpy().reshape(-1)
+
+    def sample_predictions(y_true, y_pred, limit=200):
+        if len(y_true) == 0:
+            return []
+        total = len(y_true)
+        size = min(limit, total)
+        idx = np.linspace(0, total - 1, num=size, dtype=int)
+        return [{"actual": float(y_true[i]), "predicted": float(y_pred[i])} for i in idx]
+
+    def compute_feature_importance_for_model(name, model, X, y):
+        try:
+            if hasattr(model, "feature_importances_"):
+                importances = model.feature_importances_
+            else:
+                from sklearn.inspection import permutation_importance
+                if len(X) > 300:
+                    rng = np.random.RandomState(RANDOM_SEED)
+                    idx = rng.choice(len(X), size=300, replace=False)
+                    X = X[idx]
+                    y = y[idx]
+                result = permutation_importance(
+                    model,
+                    X,
+                    y,
+                    n_repeats=5,
+                    random_state=RANDOM_SEED,
+                    scoring="neg_root_mean_squared_error"
+                )
+                importances = result.importances_mean
+            items = []
+            for idx, feature in enumerate(feat_names):
+                value = float(importances[idx]) if idx < len(importances) else 0.0
+                items.append({"feature": feature, "importance": value})
+            items.sort(key=lambda item: abs(item["importance"]), reverse=True)
+            return items
+        except Exception as e:
+            print(f"[WARN] feature importance failed for {name}: {e}")
+            return []
+
+    def compute_feature_importance_map(models, mlp_model, mlp_scaler, Xte, yte):
+        importance = {}
+        for name, model in models.items():
+            importance[name] = compute_feature_importance_for_model(name, model, Xte, yte)
+        if mlp_model is not None and mlp_scaler is not None:
+            importance["MLP"] = compute_feature_importance_for_model("MLP", MLPWrapper(mlp_model, mlp_scaler), Xte, yte)
+        return importance
+
+    def build_dataset_metrics(suite):
+        if suite is None:
+            return None
+        yte = suite["test"]["y"]
+        metrics = {}
+        predictions = {}
+        for result in suite["results"]:
+            metrics[result["name"]] = {
+                "rmse": float(result["rmse_te"]),
+                "r2": float(result["r2_te"]),
+                "mae": float(result["mae_te"])
+            }
+            predictions[result["name"]] = sample_predictions(yte, result["yhat_te"])
+        return {
+            "models": metrics,
+            "predictions": predictions,
+            "featureImportance": suite["feature_importance"],
+            "learningCurves": suite["learning_curves"],
+            "testSize": int(len(yte))
+        }
+
+    def train_suite(X, y, label):
+        if len(X) < 2 or len(y) < 2:
+            raise ValueError(f"Not enough samples to train {label} models.")
+        X_tr, X_te, y_tr, y_te = _tts(X, y, test_size=TEST_SIZE, random_state=RANDOM_SEED)
+
+        models = {}
+        learning_curves = {}
+
+        if DT_ENABLE:
+            dt = DecisionTreeRegressor(
+                random_state=RANDOM_SEED,
+                max_depth=DT_MAX_DEPTH,
+                min_samples_leaf=DT_MIN_SAMPLES_LEAF
+            )
+            dt.fit(X_tr, y_tr)
+            models["DecisionTree"] = dt
+
+        if RF_ENABLE:
+            rf = RandomForestRegressor(
+                n_estimators=RF_TREES,
+                random_state=RANDOM_SEED,
+                n_jobs=-1,
+                max_depth=RF_MAX_DEPTH,
+                min_samples_leaf=RF_MIN_SAMPLES_LEAF
+            )
+            rf.fit(X_tr, y_tr)
+            models["RandomForest"] = rf
+
+        if SVR_ENABLE:
+            svr = SVR(kernel="rbf", C=SVR_C, epsilon=SVR_EPSILON, gamma="scale")
+            svr.fit(X_tr, y_tr)
+            models["SVR"] = svr
+
+        if LGBM_ENABLE:
+            lgbm = lgb.LGBMRegressor(
+                n_estimators=LGBM_N_EST,
+                learning_rate=0.03,
+                max_depth=-1,
+                subsample=0.8,
+                colsample_bytree=0.8,
+                reg_alpha=LGBM_REG_ALPHA,
+                reg_lambda=LGBM_REG_LAMBDA,
+                random_state=RANDOM_SEED,
+                n_jobs=-1
+            )
+            evals_result = {}
+            Xtr_lgb, Xval_lgb, ytr_lgb, yval_lgb = _tts(X_tr, y_tr, test_size=0.2, random_state=RANDOM_SEED)
+            lgbm.fit(
+                Xtr_lgb, ytr_lgb,
+                eval_set=[(Xtr_lgb, ytr_lgb), (Xval_lgb, yval_lgb)],
+                eval_names=["train", "valid"],
+                eval_metric="rmse",
+                callbacks=[lgb.early_stopping(stopping_rounds=100, verbose=False),
+                           lgb.record_evaluation(evals_result)]
+            )
+            train_curve = evals_result.get("train", {}).get("rmse", [])
+            valid_curve = evals_result.get("valid", {}).get("rmse", [])
+            if train_curve or valid_curve:
+                learning_curves["LightGBM"] = {
+                    "train": [float(v) for v in train_curve],
+                    "valid": [float(v) for v in valid_curve]
+                }
+            models["LightGBM"] = lgbm
+
+        mlp_model = None
+        mlp_scaler = None
+        if MLP_ENABLE:
+            Xtr_mlp, Xval_mlp, ytr_mlp, yval_mlp = _tts(X_tr, y_tr, test_size=0.2, random_state=RANDOM_SEED)
+            mlp_model, mlp_scaler, mlp_history = train_mlp(
+                Xtr_mlp,
+                ytr_mlp,
+                Xval_mlp,
+                yval_mlp,
+                epochs=MLP_EPOCHS,
+                patience=MLP_PATIENCE,
+                hid=MLP_HIDDEN
+            )
+            learning_curves["MLP"] = mlp_history
+
+        results = []
+        for name, model in models.items():
+            results.append(eval_model(model, X_tr, y_tr, X_te, y_te, name))
+        if mlp_model is not None and mlp_scaler is not None:
+            results.append(eval_mlp(mlp_model, mlp_scaler, X_tr, y_tr, X_te, y_te))
+
+        feature_importance = compute_feature_importance_map(models, mlp_model, mlp_scaler, X_te, y_te)
+
+        return {
+            "models": models,
+            "mlp_model": mlp_model,
+            "mlp_scaler": mlp_scaler,
+            "results": results,
+            "learning_curves": learning_curves,
+            "feature_importance": feature_importance,
+            "test": {"X": X_te, "y": y_te}
+        }
+
+    final_suite = train_suite(X_final, y_final, "final CGPA")
+    next_suite = train_suite(X_next, y_next, "next semester") if len(y_next) > 1 else None
+
+    if not final_suite["results"]:
+        raise ValueError("No models are enabled for training.")
 
     # Rank
-    rank_df = pd.DataFrame(results).sort_values(by=["rmse_te","rmse_tr"], ascending=[True,True]).reset_index(drop=True)
+    final_results = final_suite["results"]
+    rank_df = pd.DataFrame(final_results).sort_values(by=["rmse_te","rmse_tr"], ascending=[True,True]).reset_index(drop=True)
     best_name = rank_df.iloc[0]["name"]
 
     # --------- SAVE ARTIFACTS FIRST (so plotting errors won't break saving) ---------
     import joblib, torch
-    joblib.dump(dt,   out_dir/"DecisionTree.joblib")
-    joblib.dump(rf,   out_dir/"RandomForest.joblib")
-    if SVR_ENABLE: joblib.dump(svr, out_dir/"SVR.joblib")
-    joblib.dump(lgbm, out_dir/"LightGBM.joblib")
-    torch.save(mlp_model.state_dict(), out_dir/"MLP.pt")
-    joblib.dump(mlp_scaler, out_dir/"MLP_Scaler.joblib")
+    final_models = final_suite["models"]
+    if "DecisionTree" in final_models:
+        joblib.dump(final_models["DecisionTree"], out_dir/"DecisionTree.joblib")
+    if "RandomForest" in final_models:
+        joblib.dump(final_models["RandomForest"], out_dir/"RandomForest.joblib")
+    if "SVR" in final_models:
+        joblib.dump(final_models["SVR"], out_dir/"SVR.joblib")
+    if "LightGBM" in final_models:
+        joblib.dump(final_models["LightGBM"], out_dir/"LightGBM.joblib")
+    if final_suite["mlp_model"] is not None and final_suite["mlp_scaler"] is not None:
+        torch.save(final_suite["mlp_model"].state_dict(), out_dir/"MLP.pt")
+        joblib.dump(final_suite["mlp_scaler"], out_dir/"MLP_Scaler.joblib")
+
+    if next_suite is not None:
+        next_models = next_suite["models"]
+        if "DecisionTree" in next_models:
+            joblib.dump(next_models["DecisionTree"], out_dir/"DecisionTreeNext.joblib")
+        if "RandomForest" in next_models:
+            joblib.dump(next_models["RandomForest"], out_dir/"RandomForestNext.joblib")
+        if "SVR" in next_models:
+            joblib.dump(next_models["SVR"], out_dir/"SVRNext.joblib")
+        if "LightGBM" in next_models:
+            joblib.dump(next_models["LightGBM"], out_dir/"LightGBMNext.joblib")
+        if next_suite["mlp_model"] is not None and next_suite["mlp_scaler"] is not None:
+            torch.save(next_suite["mlp_model"].state_dict(), out_dir/"MLPNext.pt")
+            joblib.dump(next_suite["mlp_scaler"], out_dir/"MLPNext_Scaler.joblib")
 
     # Risk classifier
     # Label by thresholds on true final CGPA
@@ -361,8 +675,28 @@ def main():
         "grade_points": GRADE_POINTS,
         "max_gpa": max_gpa,
         "best_model": str(best_name),
-        "models": {r["name"]: {"r2_tr": r["r2_tr"], "r2_te": r["r2_te"], "rmse_tr": r["rmse_tr"], "rmse_te": r["rmse_te"]} for r in results},
-        "risk_accuracy": float(risk_accuracy)
+        "baseline_course_load": baseline_course_load,
+        "baseline_credit_hours": float(baseline_course_load * 3.0) if baseline_course_load is not None else None,
+        "models": {
+            r["name"]: {
+                "r2_tr": r["r2_tr"],
+                "r2_te": r["r2_te"],
+                "rmse_tr": r["rmse_tr"],
+                "rmse_te": r["rmse_te"],
+                "mae_tr": r["mae_tr"],
+                "mae_te": r["mae_te"]
+            }
+            for r in final_results
+        },
+        "risk_accuracy": float(risk_accuracy),
+        "enabled_models": [r["name"] for r in final_results],
+        "next_models": [r["name"] for r in next_suite["results"]] if next_suite else [],
+        "course_load_stats": {
+            "semester_gpa_by_load": semester_gpa_by_load,
+            "final_cgpa_by_load": final_cgpa_by_load,
+            "overall_semester_gpa": overall_semester_gpa,
+            "overall_final_cgpa": overall_final_cgpa
+        }
     }
     with open(out_dir/"metadata.json", "w") as f:
         json.dump(meta, f, indent=2)
@@ -388,7 +722,8 @@ def main():
     if plt is not None:
         try:
             # Residuals for best model
-            yhat_map = {r["name"]: r["yhat_te"] for r in results}
+            yhat_map = {r["name"]: r["yhat_te"] for r in final_results}
+            yf_te = final_suite["test"]["y"]
             resid = yf_te - yhat_map[best_name]
             fig, ax = plt.subplots(1,2, figsize=(10,4))
             ax[0].scatter(yhat_map[best_name], resid, alpha=0.5); ax[0].axhline(0, color='k', lw=1)
@@ -401,29 +736,33 @@ def main():
             saved_plots["best_model_residuals"] = to_static_path(p)
 
             # Feature importances for RF / LGBM
-            try:
-                fig = plt.figure(figsize=(6,4))
-                (sns.barplot(x=pd.Series(rf.feature_importances_, index=feat_names).sort_values(ascending=False).values,
-                             y=pd.Series(rf.feature_importances_, index=feat_names).sort_values(ascending=False).index)
-                 if sns is not None else plt.barh(feat_names, rf.feature_importances_))
-                plt.title("RF Feature Importance"); plt.tight_layout()
-                p = plots_dir/"rf_importance.png"
-                plt.savefig(p); plt.close()
-                saved_plots["rf_feature_importance"] = to_static_path(p)
-            except Exception as e:
-                print(f"[WARN] RF plot failed: {e}")
+            rf = final_models.get("RandomForest")
+            lgbm = final_models.get("LightGBM")
+            if rf is not None:
+                try:
+                    fig = plt.figure(figsize=(6,4))
+                    (sns.barplot(x=pd.Series(rf.feature_importances_, index=feat_names).sort_values(ascending=False).values,
+                                 y=pd.Series(rf.feature_importances_, index=feat_names).sort_values(ascending=False).index)
+                     if sns is not None else plt.barh(feat_names, rf.feature_importances_))
+                    plt.title("RF Feature Importance"); plt.tight_layout()
+                    p = plots_dir/"rf_importance.png"
+                    plt.savefig(p); plt.close()
+                    saved_plots["rf_feature_importance"] = to_static_path(p)
+                except Exception as e:
+                    print(f"[WARN] RF plot failed: {e}")
 
-            try:
-                fig = plt.figure(figsize=(6,4))
-                (sns.barplot(x=pd.Series(lgbm.feature_importances_, index=feat_names).sort_values(ascending=False).values,
-                             y=pd.Series(lgbm.feature_importances_, index=feat_names).sort_values(ascending=False).index)
-                 if sns is not None else plt.barh(feat_names, lgbm.feature_importances_))
-                plt.title("LGBM Feature Importance"); plt.tight_layout()
-                p = plots_dir/"lgbm_importance.png"
-                plt.savefig(p); plt.close()
-                saved_plots["lgbm_feature_importance"] = to_static_path(p)
-            except Exception as e:
-                print(f"[WARN] LGBM plot failed: {e}")
+            if lgbm is not None:
+                try:
+                    fig = plt.figure(figsize=(6,4))
+                    (sns.barplot(x=pd.Series(lgbm.feature_importances_, index=feat_names).sort_values(ascending=False).values,
+                                 y=pd.Series(lgbm.feature_importances_, index=feat_names).sort_values(ascending=False).index)
+                     if sns is not None else plt.barh(feat_names, lgbm.feature_importances_))
+                    plt.title("LGBM Feature Importance"); plt.tight_layout()
+                    p = plots_dir/"lgbm_importance.png"
+                    plt.savefig(p); plt.close()
+                    saved_plots["lgbm_feature_importance"] = to_static_path(p)
+                except Exception as e:
+                    print(f"[WARN] LGBM plot failed: {e}")
 
             # Risk confusion matrix
             try:
@@ -439,8 +778,9 @@ def main():
 
             # LightGBM learning curve
             try:
-                train_curve = evals_result.get("train", {}).get("rmse", [])
-                valid_curve = evals_result.get("valid", {}).get("rmse", [])
+                lgbm_curve = final_suite["learning_curves"].get("LightGBM", {})
+                train_curve = lgbm_curve.get("train", [])
+                valid_curve = lgbm_curve.get("valid", [])
                 if train_curve or valid_curve:
                     fig = plt.figure(figsize=(6,4))
                     if train_curve:
@@ -466,14 +806,21 @@ def main():
         "accuracy": float(risk_accuracy)
     }
 
+    metrics_payload = {
+        "summary": metrics_summary,
+        "bestModel": str(best_name),
+        "enabledModels": [r["name"] for r in final_results],
+        "final": build_dataset_metrics(final_suite),
+        "next": build_dataset_metrics(next_suite) if next_suite else None
+    }
+
     result = {
         "status": "ok",
         "bestModel": meta["best_model"],
         "artifactsDir": str(out_dir),
         "plots": saved_plots,
         "gradePoints": GRADE_POINTS,
-        "metrics": metrics_summary,
-        "models": meta["models"]
+        "metrics": metrics_payload
     }
     print("__RESULT__" + json.dumps(result))
     return 0
