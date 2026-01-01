@@ -27,7 +27,9 @@ except Exception:
 def semester_gpa(sem, GP):
     pts = []
     for k, g in sem.items():
-        if k != "attendancePercentage" and g in GP:
+        if k in ("attendancePercentage", "creditHours"):
+            continue
+        if g in GP:
             pts.append(GP[g])
     return float(np.mean(pts)) if pts else None
 
@@ -87,7 +89,9 @@ def compute_current(student, GP):
     tot=0.0; cnt=0
     for s in sems.values():
         for k,g in s.items():
-            if k!="attendancePercentage" and g in GP:
+            if k in ("attendancePercentage", "creditHours"):
+                continue
+            if g in GP:
                 tot += GP[g]; cnt += 1
     cgpa = (tot/cnt) if cnt>0 else None
     return last_sem_gpa, cgpa, last
@@ -100,7 +104,13 @@ def average_course_load(student):
     for sem in semesters.values():
         if not isinstance(sem, dict):
             continue
-        load = sum(1 for k in sem if k != "attendancePercentage")
+        if "creditHours" in sem:
+            try:
+                load = float(sem["creditHours"]) / 3.0
+            except Exception:
+                load = 0
+        else:
+            load = sum(1 for k in sem if k not in ("attendancePercentage", "creditHours"))
         if load > 0:
             loads.append(load)
     if not loads:

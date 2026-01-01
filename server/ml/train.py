@@ -60,7 +60,7 @@ def validate_grade_points(grade_points: dict):
 def semester_gpa(sem, GP):
     pts = []
     for k, g in sem.items():
-        if k == "attendancePercentage":
+        if k in ("attendancePercentage", "creditHours"):
             continue
         if g in GP:
             pts.append(GP[g])
@@ -70,7 +70,7 @@ def cumulative_cgpa(semesters, GP):
     tot = 0.0; cnt = 0
     for sem in semesters.values():
         for k, g in sem.items():
-            if k == "attendancePercentage":
+            if k in ("attendancePercentage", "creditHours"):
                 continue
             if g in GP:
                 tot += GP[g]; cnt += 1
@@ -164,7 +164,13 @@ def average_course_load(student):
     for sem in semesters.values():
         if not isinstance(sem, dict):
             continue
-        load = sum(1 for k in sem if k != "attendancePercentage")
+        if "creditHours" in sem:
+            try:
+                load = float(sem["creditHours"]) / 3.0
+            except Exception:
+                load = 0
+        else:
+            load = sum(1 for k in sem if k not in ("attendancePercentage", "creditHours"))
         if load > 0:
             loads.append(load)
     if not loads:
@@ -276,7 +282,13 @@ def main():
             for sem in semesters.values():
                 if not isinstance(sem, dict):
                     continue
-                load = sum(1 for k in sem if k != "attendancePercentage")
+                if "creditHours" in sem:
+                    try:
+                        load = float(sem["creditHours"]) / 3.0
+                    except Exception:
+                        load = 0
+                else:
+                    load = sum(1 for k in sem if k not in ("attendancePercentage", "creditHours"))
                 if load <= 0:
                     continue
                 sem_gpa = semester_gpa(sem, GRADE_POINTS)
